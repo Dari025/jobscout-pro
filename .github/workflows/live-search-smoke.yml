@@ -23,8 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install minimal parser dependencies
-        run: pip install httpx pydantic PyYAML beautifulsoup4
+      - name: Install project dependencies
+        run: pip install -r requirements.txt
       - name: Probe live public search APIs and exact posting URLs
         run: python scripts/smoke_search_sources.py
         continue-on-error: true

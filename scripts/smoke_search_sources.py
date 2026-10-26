@@ -6,6 +6,8 @@ availability. It prints counts and checks that returned records have specific UR
 from __future__ import annotations
 
 from collections import Counter
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -139,6 +141,47 @@ def probe_targeted_searches() -> None:
                 )
 
 
+def run_end_to_end_cli() -> bool:
+    """Run the deployed CLI entrypoint in quick/dry-run mode with the public example config."""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["PYTHONUNBUFFERED"] = "1"
+    env["JOBSCOUT_TARGET_TITLE"] = "Data Analyst"
+    command = [
+        sys.executable, "-m", "job_scout.cli",
+        "--config", str(ROOT / "busqueda.example.yaml"),
+        "scrape", "--quick", "--dry-run",
+    ]
+    print("\\nEND-TO-END CLI SMOKE: " + " ".join(command), flush=True)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=110,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        tail = exc.stdout or ""
+        if isinstance(tail, bytes):
+            tail = tail.decode("utf-8", errors="replace")
+        print("CLI SMOKE TIMEOUT after 110 seconds. Output tail:", tail[-6000:])
+        return False
+
+    output = completed.stdout or ""
+    print("CLI SMOKE EXIT CODE:", completed.returncode)
+    print(output[-12000:])
+    import re
+    match = re.search(r"Found (\d+) jobs", output)
+    count = int(match.group(1)) if match else None
+    ok = completed.returncode == 0 and count is not None and count > 0
+    print(f"CLI SMOKE RESULT: {'PASS' if ok else 'WARNING'}; usable postings counted={count}")
+    return ok
+
+
 def main() -> int:
     results = {}
     with httpx.Client(
@@ -152,6 +195,7 @@ def main() -> int:
     # Connectivity and payload checks alone are not enough: exercise the same
     # source adapters/region filters used by the deployed search button as well.
     probe_targeted_searches()
+    cli_ok = run_end_to_end_cli()
 
     failed = False
     for provider, (ok, detail) in results.items():
@@ -159,8 +203,10 @@ def main() -> int:
         print(f"{status} {provider}: {detail}")
         if not ok:
             failed = True
+    if not cli_ok:
+        failed = True
     # This workflow is explicitly non-blocking, but a non-zero exit makes the
-    # provider problem visible in its logs/check annotations.
+    # provider or end-to-end CLI problem visible in its logs/check annotations.
     return 1 if failed else 0
 
 
