@@ -286,7 +286,7 @@ def infer_experience(row: dict[str, Any]) -> dict[str, Any]:
     elif re.search(r"\b(mid[\s-]?level|intermediate|experienced professional)\b", title, flags=re.I):
         level = "Intermedio"
         level_evidence = "título de la vacante"
-    elif re.search(r"\b(junior|jr\.?|entry[\s-]?level|graduate|early[\s-]?career|new grad)\b", text, flags=re.I) or years_max is not None and years_max <= 2 or years_min is not None and years_min <= 1 and (years_max is None or years_max <= 2):
+    elif re.search(r"\b(junior|jr\.?|entry[\s-]?level|graduate|early[\s-]?career|new grad)\b", title, flags=re.I) or years_max is not None and years_max <= 2 or years_min is not None and years_min <= 1 and (years_max is None or years_max <= 2):
         level = "Junior / entrada"
         level_evidence = "mención junior/entry-level o requisito de experiencia inicial"
     elif years_min is not None and years_min >= 5:

@@ -166,3 +166,11 @@ def test_salary_and_experience_filters_apply_to_known_values_only_unless_strict(
     assert not job_matches_optional_filters(unknown, {
         "experience_level": "Junior / entrada", "include_unknown_experience": False
     })
+
+
+def test_graduate_degree_requirement_is_not_mistaken_for_junior_seniority():
+    result = infer_experience({
+        "title": "Business Analyst",
+        "description": "Requires a graduate degree in Economics and strong communication skills.",
+    })
+    assert result["experience_level"] == "No indicado"
