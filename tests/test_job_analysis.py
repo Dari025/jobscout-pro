@@ -9,8 +9,10 @@ if str(SRC) not in sys.path:
 from job_scout.job_analysis import (
     analyze_job,
     analyze_salary,
+    infer_duration,
     infer_employment_type,
     infer_experience,
+    infer_hours_per_week,
     infer_work_mode,
     job_matches_optional_filters,
 )
@@ -174,3 +176,71 @@ def test_graduate_degree_requirement_is_not_mistaken_for_junior_seniority():
         "description": "Requires a graduate degree in Economics and strong communication skills.",
     })
     assert result["experience_level"] == "No indicado"
+
+
+def test_weekly_hours_and_duration_are_extracted_only_when_explicit():
+    hours = infer_hours_per_week({
+        "title": "Data Intern",
+        "description": "Part-time placement, 20-25 hours per week."
+    })
+    duration = infer_duration({
+        "title": "Data Intern",
+        "description": "The internship is for 6 months."
+    })
+    unknown_hours = infer_hours_per_week({"title": "Analyst", "description": "Flexible hours."})
+    unknown_duration = infer_duration({"title": "Analyst", "description": "Competitive salary."})
+
+    assert hours["hours_per_week_min"] == 20
+    assert hours["hours_per_week_max"] == 25
+    assert duration["duration_months_min"] == 6
+    assert duration["duration_band"] == "Prácticas cortas (3–6 meses)"
+    assert unknown_hours["hours_per_week_min"] is None
+    assert unknown_duration["duration_band"] == "No indicado"
+
+
+def test_salary_maximum_and_unknown_data_are_handled_without_false_exclusion():
+    in_range = {
+        "salary_eur_year_min": 28000,
+        "salary_eur_year_max": 35000,
+        "experience_level": "Junior / entrada",
+        "employment_type_label": "Tiempo parcial",
+        "work_mode_label": "Remoto",
+        "duration_band": "No indicado",
+        "hours_per_week_min": None,
+    }
+    assert job_matches_optional_filters(in_range, {"min_salary_eur_year": 30000})
+    assert job_matches_optional_filters(in_range, {"max_salary_eur_year": 40000})
+    assert not job_matches_optional_filters(in_range, {"max_salary_eur_year": 25000})
+    assert job_matches_optional_filters(in_range, {"max_hours_per_week": 25})
+    assert not job_matches_optional_filters(in_range, {"max_hours_per_week": 25, "include_unknown_hours": False})
+    assert job_matches_optional_filters(in_range, {"duration_band": ["Prácticas cortas (3–6 meses)"]})
+    assert not job_matches_optional_filters(in_range, {
+        "duration_band": ["Prácticas cortas (3–6 meses)"],
+        "include_unknown_duration": False,
+    })
+
+
+def test_multiple_experience_contract_and_mode_values_are_supported():
+    job = {
+        "experience_level": "Junior / entrada",
+        "employment_type_label": "Tiempo parcial",
+        "work_mode_label": "Remoto",
+    }
+    assert job_matches_optional_filters(job, {
+        "experience_level": ["Prácticas / beca", "Junior / entrada"],
+        "employment_type": ["Tiempo parcial", "Prácticas / beca"],
+        "work_mode": ["Remoto", "Híbrido"],
+    })
+
+
+def test_max_hours_filter_uses_published_range_upper_bound():
+    role_within_limit = {
+        "hours_per_week_min": 20,
+        "hours_per_week_max": 25,
+    }
+    role_over_limit = {
+        "hours_per_week_min": 20,
+        "hours_per_week_max": 30,
+    }
+    assert job_matches_optional_filters(role_within_limit, {"max_hours_per_week": 25})
+    assert not job_matches_optional_filters(role_over_limit, {"max_hours_per_week": 25})

@@ -80,17 +80,45 @@ $env:JOBSCOUT_DB_PATH = "C:\Users\TU_USUARIO\AppData\Local\job_scout\jobs.db"
 
 También se puede configurar `db_path` en el YAML privado. La app abre la base en modo de solo lectura y busca una tabla con registros que incluyan título y empresa. Si no encuentra ofertas válidas, muestra un aviso en vez de inventar resultados.
 
-## Notificaciones de Telegram
+## Filtros y ofertas con información incompleta
 
-Revoca cualquier token que haya estado publicado en el repositorio. Crea un token nuevo en Telegram con BotFather y guárdalo como variable de entorno en PowerShell (solo para la sesión actual):
+Los filtros son acumulables: puesto/palabra clave, fecha de publicación, relevancia, fuentes, salario mínimo/máximo, experiencia, tipo de contrato, modalidad, duración y horas semanales. Experiencia, contrato, modalidad y duración permiten seleccionar varias opciones.
 
-```powershell
-$env:TELEGRAM_BOT_TOKEN = "PEGA_AQUI_EL_TOKEN_NUEVO"
-$env:TELEGRAM_CHAT_ID = "TU_CHAT_ID"
-python notificar_top.py
+**Regla de datos desconocidos:** los campos ausentes o no comparables se mantienen en los resultados por defecto. Cada filtro tiene una opción para conservar o excluir expresamente las ofertas sin ese dato. La extracción de duración, horas y salario se basa en texto/metadatos explícitos; no se consideran valores estimados como si fueran datos publicados.
+
+El modo sin CV sigue disponible: basta con indicar uno o varios puestos y una ubicación. El CV es opcional y solo se usa para el análisis de relevancia en la sesión actual.
+
+## Resumen y alertas por Telegram o correo
+
+En el dashboard abre la pestaña **Alertas**. JobScout prepara un Top 10 de las ofertas que sobreviven a los filtros activos, ordenadas por relevancia, con salario, modalidad, contrato, experiencia, herramientas detectadas, pros y puntos que debes verificar. Los campos no publicados se marcan como pendientes de confirmar; no se inventan.
+
+Puedes enviar el resumen manualmente por Telegram o correo, o activar **Enviar automáticamente el Top 10 al terminar cada búsqueda correcta**. El envío automático funciona cuando la aplicación está abierta y se completa una búsqueda que tú has lanzado. **No es un programador 24/7 ni envía un resumen diario en segundo plano.** Para eso haría falta un proceso o servicio programado y persistente.
+
+### Configuración local
+
+Crea el archivo .streamlit/secrets.toml (está incluido en .gitignore) o usa variables de entorno con los mismos nombres. En el archivo puedes poner solo los canales que vayas a usar:
+
+```toml
+TELEGRAM_BOT_TOKEN = "token-del-bot"
+TELEGRAM_CHAT_ID = "123456789"
+
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+SMTP_USER = "tu-cuenta@gmail.com"
+SMTP_PASSWORD = "contraseña-de-aplicación"
+SMTP_FROM = "tu-cuenta@gmail.com"
+SMTP_TO = "destino@gmail.com"
 ```
 
-No guardes el token en el repositorio, en capturas de pantalla ni en archivos que vayas a publicar. Las variables de entorno de PowerShell dejan de existir al cerrar esa terminal, salvo que las configures de forma persistente tú mismo.
+Para Telegram, crea el bot con BotFather, inicia una conversación con él y añade el chat ID. Para Gmail normalmente necesitarás una contraseña de aplicación. El chat ID y destinatario también pueden escribirse en la pestaña Alertas; el token y la contraseña SMTP solo se leen de variables de entorno o secretos y no se muestran en pantalla. No compartas ni subas el archivo de secretos a GitHub.
+
+En PowerShell puedes crear/editar el archivo con VS Code y arrancar desde esa misma terminal:
+
+```powershell
+streamlit run app.py
+```
+
+En un despliegue de Streamlit, configura las mismas claves en la sección Secrets del servicio. Si solo quieres usar el buscador, puedes dejar todos los canales de notificación sin configurar.
 
 ## Pruebas
 

@@ -213,6 +213,7 @@ def analyze_salary(row: dict[str, Any]) -> dict[str, Any]:
             "salary_currency": currency,
             "salary_interval": interval,
             "salary_eur_year_min": None,
+            "salary_eur_year_max": None,
             "salary_known": False,
             "salary_evidence": "importe publicado no normalizable",
         }
@@ -222,13 +223,21 @@ def analyze_salary(row: dict[str, Any]) -> dict[str, Any]:
     currency = currency or "Moneda no indicada"
     salary_display = _display_salary(low, high, currency, interval) if low is not None or high is not None else raw_display
     annual_min = None
-    if currency == "EUR" and low is not None and interval in ANNUALIZATION:
-        annual_min = low * ANNUALIZATION[interval]
+    annual_max = None
+    if currency == "EUR" and interval in ANNUALIZATION:
+        factor = ANNUALIZATION[interval]
+        if low is not None:
+            annual_min = low * factor
+        if high is not None:
+            annual_max = high * factor
+        elif low is not None:
+            annual_max = annual_min
     return {
         "salary_display": salary_display or raw_display,
         "salary_currency": currency,
         "salary_interval": interval,
         "salary_eur_year_min": annual_min,
+        "salary_eur_year_max": annual_max,
         "salary_known": low is not None or high is not None,
         "salary_evidence": evidence if low is not None or high is not None else "sin cifra salarial verificable",
     }
@@ -343,6 +352,114 @@ def infer_employment_type(row: dict[str, Any]) -> dict[str, str]:
     return {"employment_type_label": label, "employment_type_evidence": evidence}
 
 
+DURATION_BANDS = (
+    "Prácticas de verano (≤3 meses)",
+    "Prácticas cortas (3–6 meses)",
+    "6–12 meses",
+    "Más de 12 meses",
+    "Indefinido / largo plazo",
+)
+
+
+def infer_hours_per_week(row: dict[str, Any]) -> dict[str, Any]:
+    """Extract weekly hours only when the vacancy states a numeric amount."""
+    text = f"{_text(row.get('title'))} {_text(row.get('description'))}".casefold()
+    range_patterns = (
+        r"\b(?P<lo>\d{1,2})\s*(?:-|–|to|a)\s*(?P<hi>\d{1,2})\s*(?:hours?|hrs?|h)\s*(?:per|/)\s*week\b",
+        r"\b(?P<lo>\d{1,2})\s*(?:-|–|a)\s*(?P<hi>\d{1,2})\s*horas?\s*(?:por|a la)\s*semana\b",
+    )
+    single_patterns = (
+        r"\b(?P<lo>\d{1,2})\s*(?:hours?|hrs?|h)\s*(?:per|/)\s*week\b",
+        r"\b(?P<lo>\d{1,2})\s*hours?\s*weekly\b",
+        r"\b(?P<lo>\d{1,2})\s*horas?\s*(?:por|a la)\s*semana\b",
+        r"\b(?P<lo>\d{1,2})\s*horas?\s*semanales\b",
+    )
+    for pattern in range_patterns:
+        match = re.search(pattern, text, flags=re.I)
+        if match:
+            low, high = int(match.group("lo")), int(match.group("hi"))
+            if 1 <= low <= high <= 100:
+                return {
+                    "hours_per_week_min": low,
+                    "hours_per_week_max": high,
+                    "hours_per_week_label": f"{low}–{high} h/semana",
+                    "hours_per_week_evidence": match.group(0),
+                }
+    for pattern in single_patterns:
+        match = re.search(pattern, text, flags=re.I)
+        if match:
+            hours = int(match.group("lo"))
+            if 1 <= hours <= 100:
+                return {
+                    "hours_per_week_min": hours,
+                    "hours_per_week_max": hours,
+                    "hours_per_week_label": f"{hours} h/semana",
+                    "hours_per_week_evidence": match.group(0),
+                }
+    return {
+        "hours_per_week_min": None,
+        "hours_per_week_max": None,
+        "hours_per_week_label": "No indicado",
+        "hours_per_week_evidence": "el anuncio no especifica horas semanales comparables",
+    }
+
+
+def infer_duration(row: dict[str, Any]) -> dict[str, Any]:
+    """Infer a duration band from explicit contract/placement wording only."""
+    text = f"{_text(row.get('title'))} {_text(row.get('description'))}".casefold()
+    if re.search(r"\b(indefinite|permanent|permanent contract|indefinido|indefinida|contrato fijo|long[- ]term|ongoing role)\b", text):
+        return {
+            "duration_band": "Indefinido / largo plazo",
+            "duration_months_min": None,
+            "duration_months_max": None,
+            "duration_evidence": "el anuncio menciona una relación indefinida o de largo plazo",
+        }
+    patterns = (
+        r"\b(?P<lo>\d{1,2})\s*(?:-|–|to|a)\s*(?P<hi>\d{1,2})\s*(?:months?|meses)\b",
+        r"\b(?P<lo>\d{1,2})\s*(?:months?|meses)[- ](?:long|duration|internship|contract|pr[aá]cticas|de duraci[oó]n)\b",
+        r"\b(?:duration|duraci[oó]n|internship|placement|contract|contrato|pr[aá]cticas|beca)[^.!?;]{0,55}?(?P<lo>\d{1,2})\s*(?:months?|meses)\b",
+        r"\b(?P<lo>\d{1,2})\s*(?:months?|meses)\b",
+    )
+    months_min = months_max = None
+    evidence = ""
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.I)
+        if not match:
+            continue
+        snippet = match.group(0)
+        # Do not interpret a requirement for months of experience as job duration.
+        if re.search(r"experience|experiencia", text[max(0, match.start()-18):min(len(text), match.end()+18)]):
+            continue
+        months_min = int(match.group("lo"))
+        months_max = int(match.groupdict().get("hi") or months_min)
+        if not (1 <= months_min <= months_max <= 120):
+            months_min = months_max = None
+            continue
+        evidence = snippet
+        break
+    if months_min is None:
+        return {
+            "duration_band": "No indicado",
+            "duration_months_min": None,
+            "duration_months_max": None,
+            "duration_evidence": "el anuncio no indica una duración verificable",
+        }
+    if months_max <= 3:
+        band = "Prácticas de verano (≤3 meses)"
+    elif months_max <= 6:
+        band = "Prácticas cortas (3–6 meses)"
+    elif months_min <= 12:
+        band = "6–12 meses"
+    else:
+        band = "Más de 12 meses"
+    return {
+        "duration_band": band,
+        "duration_months_min": months_min,
+        "duration_months_max": months_max,
+        "duration_evidence": evidence,
+    }
+
+
 def infer_work_mode(row: dict[str, Any]) -> dict[str, str]:
     """Infer mode only when the posting explicitly provides a clear signal."""
     text = f"{_text(row.get('title'))} {_text(row.get('description'))} {_text(row.get('location'))}".casefold()
@@ -376,6 +493,8 @@ def analyze_job(
     experience = infer_experience(row)
     contract = infer_employment_type(row)
     mode = infer_work_mode(row)
+    duration = infer_duration(row)
+    hours = infer_hours_per_week(row)
     requirements = extract_requirements(row)
     cv = _text(cv_text).casefold()
     cv_matches = [
@@ -401,6 +520,8 @@ def analyze_job(
         **experience,
         **contract,
         **mode,
+        **duration,
+        **hours,
         "requirements": requirements,
         "cv_matches": cv_matches,
         "cv_unconfirmed": cv_unconfirmed,
@@ -411,44 +532,64 @@ def analyze_job(
 
 
 def job_matches_optional_filters(job: dict[str, Any], options: dict[str, Any]) -> bool:
-    """Apply only enabled filters; default to keeping jobs whose data is unknown."""
+    """Apply optional filters while retaining unknown data unless the user opts out."""
+    def matches(observed: Any, selected: Any, include_unknown: bool) -> bool:
+        if not selected:
+            return True
+        value = _text(observed) or "No indicado"
+        if value.casefold() in {"no indicado", "unknown", "none", "nan"}:
+            return include_unknown
+        values = set(selected) if isinstance(selected, (list, tuple, set)) else {selected}
+        return value in values
+
     min_salary = options.get("min_salary_eur_year")
-    if min_salary is not None:
-        salary = job.get("salary_eur_year_min")
+    max_salary = options.get("max_salary_eur_year")
+    if min_salary is not None or max_salary is not None:
+        salary_low = job.get("salary_eur_year_min")
+        salary_high = job.get("salary_eur_year_max")
         try:
-            missing_salary = salary is None or salary != salary
+            missing_salary = salary_low is None or salary_low != salary_low
         except Exception:
             missing_salary = True
         if missing_salary:
             if not options.get("include_unknown_salary", True):
                 return False
-        elif float(salary) < float(min_salary):
-            return False
+        else:
+            # A range that overlaps the requested band is kept; do not reject it
+            # just because its lower bound sits below the user's minimum.
+            try:
+                low_value = float(salary_low)
+                high_value = float(salary_high) if salary_high is not None and salary_high == salary_high else low_value
+            except (TypeError, ValueError):
+                if not options.get("include_unknown_salary", True):
+                    return False
+            else:
+                if min_salary is not None and high_value < float(min_salary):
+                    return False
+                if max_salary is not None and low_value > float(max_salary):
+                    return False
 
-    experience_filter = options.get("experience_level")
-    if experience_filter:
-        observed = _text(job.get("experience_level")) or "No indicado"
-        if observed == "No indicado":
-            if not options.get("include_unknown_experience", True):
-                return False
-        elif observed != experience_filter:
-            return False
+    if not matches(job.get("experience_level"), options.get("experience_level"), options.get("include_unknown_experience", True)):
+        return False
+    if not matches(job.get("employment_type_label"), options.get("employment_type"), options.get("include_unknown_employment", True)):
+        return False
+    if not matches(job.get("work_mode_label"), options.get("work_mode"), options.get("include_unknown_work_mode", True)):
+        return False
+    if not matches(job.get("duration_band"), options.get("duration_band"), options.get("include_unknown_duration", True)):
+        return False
 
-    type_filter = options.get("employment_type")
-    if type_filter:
-        observed = _text(job.get("employment_type_label")) or "No indicado"
-        if observed == "No indicado":
-            if not options.get("include_unknown_employment", True):
+    max_hours = options.get("max_hours_per_week")
+    if max_hours is not None:
+        observed_hours = job.get("hours_per_week_max")
+        if observed_hours is None:
+            observed_hours = job.get("hours_per_week_min")
+        try:
+            hours_unknown = observed_hours is None or observed_hours != observed_hours
+        except Exception:
+            hours_unknown = True
+        if hours_unknown:
+            if not options.get("include_unknown_hours", True):
                 return False
-        elif observed != type_filter:
-            return False
-
-    mode_filter = options.get("work_mode")
-    if mode_filter:
-        observed = _text(job.get("work_mode_label")) or "No indicado"
-        if observed == "No indicado":
-            if not options.get("include_unknown_work_mode", True):
-                return False
-        elif observed != mode_filter:
+        elif float(observed_hours) > float(max_hours):
             return False
     return True

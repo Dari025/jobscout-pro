@@ -44,11 +44,19 @@ from job_scout.job_analysis import (
     CONTRACT_TYPES,
     EXPERIENCE_BANDS,
     WORK_MODES,
+    DURATION_BANDS,
     analyze_job,
     job_matches_optional_filters,
 )
+from job_scout.notifications import (
+    NotificationError,
+    build_top_jobs_digest,
+    render_digest_text,
+    send_email_digest,
+    send_telegram_digest,
+)
 
-APP_BUILD = "2026.10.26-domain-ranking-cv-privacy-v3"
+APP_BUILD = "2026.10.27-filters-alert-digests-v4"
 
 
 st.set_page_config(
@@ -114,7 +122,7 @@ config, config_path = load_config(template_path)
 
 # Reset state created by older app builds once, so a browser tab cannot retain
 # an old profile, CV, target title, saved list, or old search result state.
-SESSION_SCHEMA = "clean-isolated-workspaces-v3-domain-ranking-cv-privacy"
+SESSION_SCHEMA = "clean-isolated-workspaces-v4-filters-digests"
 if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
     for stale_key in (
         "cv_text", "saved_jobs", "refresh_key", "target_title", "last_scrape",
@@ -127,7 +135,12 @@ if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
         "include_unknown_experience", "contract_filter_enabled", "contract_filter_type",
         "include_unknown_employment", "mode_filter_enabled", "mode_filter_value",
         "include_unknown_work_mode", "cv_changed_notice", "cv_cleared_notice",
-        "cv_removed_notice", "cv_truncated_notice",
+        "cv_removed_notice", "cv_truncated_notice", "salary_max_filter_enabled",
+        "salary_maximum_eur", "duration_filter_enabled", "duration_filter_values",
+        "include_unknown_duration", "hours_filter_enabled", "maximum_hours_weekly",
+        "include_unknown_hours", "published_window_clean", "include_unknown_published_date",
+        "notify_auto_enabled", "notification_telegram_chat_id",
+        "notification_email_recipient", "notify_pending_search_id", "notify_auto_sent_id",
     ):
         st.session_state.pop(stale_key, None)
     for stale_upload_key in [
@@ -191,11 +204,13 @@ for job in jobs:
     analysis = analyze_job(job, st.session_state.cv_text, target_terms)
     job["salary"] = analysis.get("salary_display") or str(job.get("salary") or "")
     for field in (
-        "salary_eur_year_min", "salary_currency", "salary_interval", "salary_known",
+        "salary_eur_year_min", "salary_eur_year_max", "salary_currency", "salary_interval", "salary_known",
         "salary_evidence", "experience_level", "experience_min_years",
         "experience_max_years", "experience_evidence", "experience_level_evidence",
         "employment_type_label", "employment_type_evidence", "work_mode_label",
-        "work_mode_evidence", "requirements", "cv_matches", "cv_unconfirmed",
+        "work_mode_evidence", "duration_band", "duration_months_min", "duration_months_max",
+        "duration_evidence", "hours_per_week_min", "hours_per_week_max",
+        "hours_per_week_label", "hours_per_week_evidence", "requirements", "cv_matches", "cv_unconfirmed",
         "target_title_matches", "analysis_method", "analysis_notes",
     ):
         job[field] = analysis.get(field)
@@ -295,6 +310,17 @@ def _handle_cv_consent_change() -> None:
         ) + 1
         _purge_uploaded_cv_widget_state()
         st.session_state["cv_removed_notice"] = True
+
+
+def _configured_secret(name: str, default: str = "") -> str:
+    """Read notification credentials from environment or Streamlit secrets only."""
+    value = str(os.environ.get(name, "") or "").strip()
+    if value:
+        return value
+    try:
+        return str(st.secrets.get(name, default) or default).strip()
+    except Exception:
+        return str(default or "").strip()
 
 
 with st.sidebar:
@@ -401,7 +427,7 @@ with st.sidebar:
         help="Si no seleccionas ninguna fuente, se muestran ofertas de todas las fuentes disponibles.",
     )
     sort_mode = st.selectbox(
-        "Ordenar por", ["Mayor relevancia", "Más recientes"],
+        "Ordenar por", ["Mayor relevancia", "Más recientes", "Salario más alto"],
         key="sort_mode_clean",
     )
 
@@ -418,26 +444,45 @@ with st.sidebar:
         "Rápida: menos peticiones y resultados iniciales. Completa: más cobertura, aunque las fuentes pueden bloquear o ralentizar consultas."
     )
 
+    st.selectbox(
+        "Fecha de publicación",
+        ["Cualquier fecha", "Últimos 3 días", "Últimos 7 días", "Últimos 14 días", "Últimos 30 días"],
+        key="published_window_clean",
+        help="Las ofertas sin fecha conocida se conservan por defecto para no perder oportunidades.",
+    )
+    include_unknown_published_date = st.checkbox(
+        "Incluir ofertas sin fecha de publicación conocida",
+        value=True,
+        key="include_unknown_published_date",
+    )
+
     with st.expander("Filtros avanzados (todos opcionales)", expanded=False):
         st.caption(
-            "Por defecto no se aplica ningún filtro avanzado. Los anuncios sin datos suficientes se conservan; "
-            "puedes excluirlos explícitamente en cada filtro."
+            "Los filtros solo comparan datos detectados en la oferta. "
+            "Por defecto, una oferta con salario, horas, duración o experiencia no indicados se conserva."
         )
         salary_filter_enabled = st.checkbox(
-            "Aplicar salario mínimo anual bruto (EUR)",
-            value=False, key="salary_filter_enabled",
+            "Filtrar por salario anual bruto (EUR)", value=False, key="salary_filter_enabled",
         )
         salary_minimum_eur = None
+        salary_maximum_eur = None
         include_unknown_salary = True
         if salary_filter_enabled:
             salary_minimum_eur = st.number_input(
-                "Mínimo anual en euros", min_value=0, max_value=300000,
+                "Salario mínimo anual (EUR)", min_value=0, max_value=300000,
                 value=25000, step=1000, key="salary_minimum_eur",
             )
+            salary_max_filter_enabled = st.checkbox(
+                "Añadir un límite salarial máximo", value=False, key="salary_max_filter_enabled",
+            )
+            if salary_max_filter_enabled:
+                salary_maximum_eur = st.number_input(
+                    "Salario máximo anual (EUR)", min_value=0, max_value=500000,
+                    value=45000, step=1000, key="salary_maximum_eur",
+                )
             include_unknown_salary = st.checkbox(
-                "Incluir ofertas sin salario EUR comparable",
-                value=True, key="include_unknown_salary",
-                help="Solo se pueden comparar importes explícitos en euros con periodo identificable.",
+                "Incluir ofertas sin salario comparable", value=True, key="include_unknown_salary",
+                help="Una oferta sin una cifra EUR/año verificable se conserva si esta opción está activada.",
             )
 
         experience_filter_enabled = st.checkbox(
@@ -446,12 +491,12 @@ with st.sidebar:
         experience_filter_level = None
         include_unknown_experience = True
         if experience_filter_enabled:
-            experience_filter_level = st.selectbox(
-                "Nivel de experiencia", EXPERIENCE_BANDS, key="experience_filter_level"
+            experience_filter_level = st.multiselect(
+                "Niveles aceptados", EXPERIENCE_BANDS, default=[], key="experience_filter_level",
+                help="Puedes elegir varios niveles. Deja la selección vacía para no restringir por nivel.",
             )
             include_unknown_experience = st.checkbox(
-                "Incluir ofertas sin nivel indicado", value=True,
-                key="include_unknown_experience",
+                "Incluir ofertas sin experiencia indicada", value=True, key="include_unknown_experience",
             )
 
         contract_filter_enabled = st.checkbox(
@@ -460,8 +505,9 @@ with st.sidebar:
         contract_filter_type = None
         include_unknown_employment = True
         if contract_filter_enabled:
-            contract_filter_type = st.selectbox(
-                "Tipo de contrato", CONTRACT_TYPES, key="contract_filter_type"
+            contract_filter_type = st.multiselect(
+                "Tipos aceptados", CONTRACT_TYPES, default=[], key="contract_filter_type",
+                help="Prácticas, parcial, completo, freelance o temporal. Puedes combinar varios.",
             )
             include_unknown_employment = st.checkbox(
                 "Incluir ofertas sin tipo de contrato indicado", value=True,
@@ -474,16 +520,45 @@ with st.sidebar:
         mode_filter_value = None
         include_unknown_work_mode = True
         if mode_filter_enabled:
-            mode_filter_value = st.selectbox(
-                "Modalidad", WORK_MODES, key="mode_filter_value"
+            mode_filter_value = st.multiselect(
+                "Modalidades aceptadas", WORK_MODES, default=[], key="mode_filter_value",
             )
             include_unknown_work_mode = st.checkbox(
                 "Incluir ofertas sin modalidad indicada", value=True,
                 key="include_unknown_work_mode",
             )
 
+        duration_filter_enabled = st.checkbox(
+            "Filtrar por duración de la oportunidad", value=False, key="duration_filter_enabled",
+        )
+        duration_filter_values = None
+        include_unknown_duration = True
+        if duration_filter_enabled:
+            duration_filter_values = st.multiselect(
+                "Duraciones aceptadas", DURATION_BANDS, default=[], key="duration_filter_values",
+            )
+            include_unknown_duration = st.checkbox(
+                "Incluir ofertas sin duración indicada", value=True, key="include_unknown_duration",
+            )
+
+        hours_filter_enabled = st.checkbox(
+            "Limitar horas semanales", value=False, key="hours_filter_enabled",
+            help="Solo se extraen horas cuando el anuncio indica una cifra explícita.",
+        )
+        maximum_hours_weekly = None
+        include_unknown_hours = True
+        if hours_filter_enabled:
+            maximum_hours_weekly = st.number_input(
+                "Máximo de horas por semana", min_value=1, max_value=60, value=25, step=5,
+                key="maximum_hours_weekly",
+            )
+            include_unknown_hours = st.checkbox(
+                "Incluir ofertas sin horas semanales indicadas", value=True, key="include_unknown_hours",
+            )
+
     optional_filter_options = {
         "min_salary_eur_year": salary_minimum_eur if salary_filter_enabled else None,
+        "max_salary_eur_year": salary_maximum_eur if salary_filter_enabled and st.session_state.get("salary_max_filter_enabled", False) else None,
         "include_unknown_salary": include_unknown_salary,
         "experience_level": experience_filter_level if experience_filter_enabled else None,
         "include_unknown_experience": include_unknown_experience,
@@ -491,6 +566,10 @@ with st.sidebar:
         "include_unknown_employment": include_unknown_employment,
         "work_mode": mode_filter_value if mode_filter_enabled else None,
         "include_unknown_work_mode": include_unknown_work_mode,
+        "duration_band": duration_filter_values if duration_filter_enabled else None,
+        "include_unknown_duration": include_unknown_duration,
+        "max_hours_per_week": maximum_hours_weekly if hours_filter_enabled else None,
+        "include_unknown_hours": include_unknown_hours,
     }
 
     if st.button("✦ Buscar oportunidades", type="primary", use_container_width=True):
@@ -578,11 +657,15 @@ if st.session_state.pop("scrape_requested", False):
                         message = f"El motor terminó con código {return_code}. Consulta el diagnóstico para ver el detalle."
                         status.update(label="La búsqueda terminó con incidencias", state="error", expanded=True)
                         success = False
+                    search_marker = uuid.uuid4().hex
                     st.session_state.last_scrape = {
+                        "id": search_marker,
                         "ok": success,
                         "message": message,
                         "logs": "\n".join(logs[-100:]),
                     }
+                    if success and bool(st.session_state.get("notify_auto_enabled", False)):
+                        st.session_state["notify_pending_search_id"] = search_marker
                     st.session_state.refresh_key += 1
                     st.rerun()
                 except OSError as exc:
@@ -610,7 +693,7 @@ for job in jobs:
 columns = [
     "title", "company", "location", "description", "job_url", "job_url_direct",
     "source", "date_posted", "salary", "id", "calculated_score", "has_specific_link",
-    "salary_eur_year_min", "salary_currency", "salary_interval", "salary_known",
+    "salary_eur_year_min", "salary_eur_year_max", "salary_currency", "salary_interval", "salary_known",
     "experience_level", "experience_min_years", "experience_max_years",
     "employment_type_label", "work_mode_label", "requirements", "cv_matches",
     "cv_unconfirmed", "analysis_notes", "_identity",
@@ -636,6 +719,15 @@ if not df.empty:
         )]
     if source_filter:
         df = df[df["source"].fillna("").astype(str).isin(source_filter)]
+    publication_days = {"Últimos 3 días": 3, "Últimos 7 días": 7, "Últimos 14 días": 14, "Últimos 30 días": 30}
+    selected_window = st.session_state.get("published_window_clean", "Cualquier fecha")
+    if selected_window in publication_days and not df.empty and "date_posted" in df.columns:
+        posted_at = pd.to_datetime(df["date_posted"], errors="coerce", utc=True)
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=publication_days[selected_window])
+        keep = posted_at >= cutoff
+        if include_unknown_published_date:
+            keep = keep | posted_at.isna()
+        df = df[keep.fillna(False)]
     if optional_filter_options and not df.empty:
         mask = df.apply(
             lambda row: job_matches_optional_filters(row.to_dict(), optional_filter_options),
@@ -646,6 +738,8 @@ if not df.empty:
         df = df.assign(_posted=pd.to_datetime(df["date_posted"], errors="coerce", utc=True))
         df = df.sort_values(["_posted", "calculated_score"], ascending=[False, False], kind="stable")
         df = df.drop(columns=["_posted"])
+    elif sort_mode == "Salario más alto" and "salary_eur_year_min" in df.columns:
+        df = df.sort_values(["salary_eur_year_min", "calculated_score"], ascending=[False, False], na_position="last", kind="stable")
     else:
         df = df.sort_values(["calculated_score", "title"], ascending=[False, True], kind="stable")
 
@@ -659,7 +753,183 @@ m2.metric("Alta relevancia", f"{high_relevance:,}", help="Índice orientativo de
 m3.metric("Con enlace específico", f"{with_link:,}")
 m4.metric("Coinciden con filtros", f"{len(df):,}")
 
-tab_discover, tab_saved, tab_method = st.tabs(["✦ Oportunidades", "★ Guardadas", "ⓘ Cómo funciona"])
+tab_discover, tab_saved, tab_alerts, tab_method = st.tabs(["✦ Oportunidades", "★ Guardadas", "🔔 Alertas", "ⓘ Cómo funciona"])
+
+with tab_alerts:
+    st.subheader("Tu resumen de oportunidades")
+    st.caption(
+        "El Top 10 se calcula con las ofertas que coinciden con tus filtros actuales y se ordena por relevancia. "
+        "Cada oferta incluye pros y puntos por confirmar basados en el anuncio, sin inventar los datos que falten."
+    )
+    digest_entries = build_top_jobs_digest(df.to_dict(orient="records"), limit=10) if not df.empty else []
+    if digest_entries:
+        preview = pd.DataFrame([
+            {
+                "N.º": item["rank"],
+                "Puesto": item["title"],
+                "Empresa": item["company"],
+                "Relevancia": f"{item['score']}/100",
+                "Salario": item["salary"],
+                "Contrato": item["contract"],
+                "Modalidad": item["work_mode"],
+            }
+            for item in digest_entries
+        ])
+        st.dataframe(preview, use_container_width=True, hide_index=True)
+        with st.expander("Ver análisis de pros y puntos a confirmar del Top 10"):
+            for item in digest_entries:
+                st.markdown(f"**{item['rank']}. {item['title']} — {item['company']}** · {item['score']}/100")
+                st.markdown("**A favor**")
+                for pro in item["pros"]:
+                    st.markdown(f"- {pro}")
+                st.markdown("**A revisar antes de decidir**")
+                for con in item["cons"]:
+                    st.markdown(f"- {con}")
+                if item.get("job_url"):
+                    st.markdown(f"[Abrir anuncio original]({item['job_url']})")
+                if item.get("apply_url") and item["apply_url"] != item.get("job_url"):
+                    st.markdown(f"[Ir a la candidatura]({item['apply_url']})")
+                st.divider()
+        with st.expander("Vista previa del mensaje completo"):
+            st.code(render_digest_text(digest_entries), language="text")
+    else:
+        st.info("Todavía no hay ofertas que coincidan con los filtros. Lanza una búsqueda o amplía algún filtro para generar el Top 10.")
+
+    st.divider()
+    st.markdown("### Envío sencillo")
+    st.caption(
+        "Los secretos no se introducen ni se guardan en esta pantalla. Configura el token/SMTP en variables de entorno "
+        "o en los secretos de Streamlit; los destinos que escribas aquí solo se mantienen en esta sesión."
+    )
+    if "notification_telegram_chat_id" not in st.session_state:
+        st.session_state["notification_telegram_chat_id"] = _configured_secret("TELEGRAM_CHAT_ID")
+    if "notification_email_recipient" not in st.session_state:
+        st.session_state["notification_email_recipient"] = _configured_secret("SMTP_TO")
+    dest_col1, dest_col2 = st.columns(2)
+    with dest_col1:
+        telegram_chat_id = st.text_input(
+            "Chat ID de Telegram", key="notification_telegram_chat_id",
+            placeholder="Ej. 123456789",
+            help="Necesitas crear un bot con BotFather y abrirle un chat antes de obtener el ID.",
+        )
+    with dest_col2:
+        email_recipient = st.text_input(
+            "Correo de destino", key="notification_email_recipient",
+            placeholder="tu@correo.com",
+        )
+
+    telegram_token = _configured_secret("TELEGRAM_BOT_TOKEN")
+    smtp_host = _configured_secret("SMTP_HOST")
+    try:
+        smtp_port = int(_configured_secret("SMTP_PORT", "587") or "587")
+        if not 1 <= smtp_port <= 65535:
+            smtp_port = 587
+    except ValueError:
+        smtp_port = 587
+    smtp_user = _configured_secret("SMTP_USER")
+    smtp_password = _configured_secret("SMTP_PASSWORD")
+    smtp_sender = _configured_secret("SMTP_FROM", smtp_user)
+    telegram_ready = bool(telegram_token and telegram_chat_id.strip())
+    email_ready = bool(smtp_host and smtp_user and smtp_password and smtp_sender and email_recipient.strip())
+
+    readiness_col1, readiness_col2 = st.columns(2)
+    with readiness_col1:
+        if telegram_ready:
+            st.success("Telegram configurado")
+        elif telegram_token:
+            st.info("Falta el chat ID de Telegram")
+        else:
+            st.info("Telegram pendiente de configurar")
+    with readiness_col2:
+        if email_ready:
+            st.success("Correo configurado")
+        else:
+            st.info("Correo pendiente de configurar")
+
+    send_col1, send_col2 = st.columns(2)
+    with send_col1:
+        if st.button("✈ Enviar Top 10 por Telegram", key="send_digest_telegram", use_container_width=True, disabled=not digest_entries):
+            try:
+                message_count = send_telegram_digest(digest_entries, telegram_token, telegram_chat_id)
+                st.success(f"Top 10 enviado a Telegram ({message_count} mensaje(s)).")
+            except NotificationError as exc:
+                st.error(str(exc))
+    with send_col2:
+        if st.button("✉ Enviar Top 10 por correo", key="send_digest_email", use_container_width=True, disabled=not digest_entries):
+            try:
+                send_email_digest(
+                    digest_entries,
+                    smtp_host=smtp_host,
+                    smtp_port=smtp_port,
+                    smtp_username=smtp_user,
+                    smtp_password=smtp_password,
+                    sender=smtp_sender,
+                    recipient=email_recipient,
+                )
+                st.success(f"Top 10 enviado a {email_recipient}.")
+            except NotificationError as exc:
+                st.error(str(exc))
+
+    st.checkbox(
+        "Enviar automáticamente el Top 10 al terminar cada búsqueda correcta",
+        key="notify_auto_enabled",
+        help="Solo se ejecuta después de pulsar Buscar oportunidades y si hay, al menos, un destino configurado. No es un servicio programado 24/7.",
+    )
+    pending_id = str(st.session_state.get("notify_pending_search_id", "") or "")
+    sent_id = str(st.session_state.get("notify_auto_sent_id", "") or "")
+    if pending_id and pending_id != sent_id:
+        auto_sent = []
+        auto_errors = []
+        if digest_entries and telegram_ready:
+            try:
+                send_telegram_digest(digest_entries, telegram_token, telegram_chat_id)
+                auto_sent.append("Telegram")
+            except NotificationError as exc:
+                auto_errors.append("Telegram: " + str(exc))
+        if digest_entries and email_ready:
+            try:
+                send_email_digest(
+                    digest_entries,
+                    smtp_host=smtp_host,
+                    smtp_port=smtp_port,
+                    smtp_username=smtp_user,
+                    smtp_password=smtp_password,
+                    sender=smtp_sender,
+                    recipient=email_recipient,
+                )
+                auto_sent.append("correo")
+            except NotificationError as exc:
+                auto_errors.append("correo: " + str(exc))
+        st.session_state["notify_auto_sent_id"] = pending_id
+        st.session_state.pop("notify_pending_search_id", None)
+        if auto_sent:
+            st.success("Envío automático completado: " + " y ".join(auto_sent) + ".")
+        if auto_errors:
+            st.warning("La búsqueda terminó, pero hubo incidencias en el envío: " + " · ".join(auto_errors))
+        if not auto_sent and not auto_errors:
+            st.info("No se ha enviado ninguna alerta: configura al menos un destino y vuelve a lanzar una búsqueda.")
+
+    with st.expander("Cómo configurar Telegram y correo"):
+        st.markdown(
+            "Añade estos valores al archivo .streamlit/secrets.toml en local o a la sección Secrets del despliegue. "
+            "También puedes usar variables de entorno con los mismos nombres. No compartas este archivo ni lo subas a GitHub."
+        )
+        st.code(
+            'TELEGRAM_BOT_TOKEN = "token-del-bot"\n'
+            'TELEGRAM_CHAT_ID = "123456789"\n'
+            'SMTP_HOST = "smtp.gmail.com"\n'
+            'SMTP_PORT = 587\n'
+            'SMTP_USER = "tu-cuenta@gmail.com"\n'
+            'SMTP_PASSWORD = "contraseña-de-aplicación"\n'
+            'SMTP_FROM = "tu-cuenta@gmail.com"\n'
+            'SMTP_TO = "tu-destino@gmail.com"',
+            language="toml",
+        )
+        st.caption(
+            "Para Gmail suele hacer falta una contraseña de aplicación. En Telegram, crea el bot con BotFather, "
+            "inicia una conversación con él y configura el chat ID. No se envía ningún mensaje hasta que pulses "
+            "el botón o actives el envío automático."
+        )
 
 with tab_discover:
     left, right = st.columns([3, 1])
@@ -710,6 +980,8 @@ with tab_discover:
                             f"Experiencia: {row.get('experience_level') or 'No indicado'}",
                             f"Contrato: {row.get('employment_type_label') or 'No indicado'}",
                             f"Modalidad: {row.get('work_mode_label') or 'No indicado'}",
+                            f"Duración: {row.get('duration_band') or 'No indicado'}",
+                            f"Horas: {row.get('hours_per_week_label') or 'No indicado'}",
                         ])
                     )
                 with score_col:
