@@ -61,21 +61,21 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+    /* System fonts avoid third-party font requests and keep the interface snappy. */
     :root { --ink:#eef4ff; --muted:#9baac2; --panel:#121d30; --line:#263752; --cyan:#67e8f9; --violet:#a78bfa; }
-    html, body, [class*="css"] { font-family:'DM Sans', sans-serif; }
+    html, body, [class*="css"] { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     .stApp { background: radial-gradient(ellipse at 12% 0%, rgba(68,91,180,.20), transparent 38%), #080e19; color:var(--ink); }
     [data-testid="stAppViewContainer"] > .main .block-container { max-width:1500px; padding-top:2.1rem; padding-bottom:3rem; }
     [data-testid="stHeader"] { background:transparent; }
     [data-testid="stSidebar"] { background:#0c1423; border-right:1px solid #1d2b42; }
     [data-testid="stSidebar"] > div { padding-top:1.5rem; }
-    h1,h2,h3,h4 { font-family:'Manrope',sans-serif !important; color:#f4f7ff !important; letter-spacing:-.035em; }
+    h1,h2,h3,h4 { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; color:#f4f7ff !important; letter-spacing:-.035em; }
     h1 { font-size:2.6rem !important; line-height:1.1 !important; }
     h2 { font-size:1.55rem !important; }
     p, label, li { color:#d8e1f0; }
     .eyebrow { color:var(--cyan); text-transform:uppercase; letter-spacing:.19em; font-size:.72rem; font-weight:800; margin-bottom:.8rem; }
     .hero { border:1px solid #283957; border-radius:24px; padding:28px 30px; margin:0 0 24px 0; background:linear-gradient(115deg, rgba(30,48,81,.96), rgba(18,29,48,.96) 58%, rgba(48,35,82,.74)); box-shadow:0 16px 48px rgba(0,0,0,.15); }
-    .hero-title { color:#f4f7ff; font-family:'Manrope',sans-serif; font-size:2.25rem; font-weight:800; letter-spacing:-.055em; line-height:1.13; margin-bottom:.75rem; }
+    .hero-title { color:#f4f7ff; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size:2.25rem; font-weight:800; letter-spacing:-.055em; line-height:1.13; margin-bottom:.75rem; }
     .hero-copy { color:#b8c7df; max-width:720px; font-size:1rem; line-height:1.65; }
     .hero-chip { display:inline-block; padding:7px 11px; border-radius:99px; border:1px solid #405477; color:#cbd8ef; font-size:.75rem; font-weight:700; margin-top:14px; background:rgba(9,17,31,.4); }
     [data-testid="stMetric"] { background:linear-gradient(145deg,rgba(18,29,48,.92),rgba(13,22,37,.92)); padding:17px 19px; border:1px solid #263752; border-radius:16px; }
