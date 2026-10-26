@@ -1,13 +1,13 @@
 import os
 import sqlite3
+import subprocess
+import threading
 import pandas as pd
 import streamlit as st
 import yaml
 from pathlib import Path
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import urllib.request
-import json
 
 # Intento de carga de PyPDF para lectura de CV
 try:
@@ -78,7 +78,6 @@ def extraer_texto_pdf(file):
     except Exception:
         return ""
 
-# --- CONFIGURACIÓN Y PERFIL ---
 target_title = "Decision Science Intern"
 
 # --- ALGORITMO DE SCORING SEMÁNTICO ---
@@ -114,10 +113,9 @@ def calcular_score_semantico(row, resume_body, target_t):
     score_final = (score_vectorial * 0.45) + (score_titulo * 0.35) + (score_stack * 0.20)
     return int(max(15, min(98, score_final)))
 
-# --- CARGA DE DATOS Y CATALOGO GLOBAL AMPLIADO ---
+# --- CATÁLOGO GLOBAL AMPLIADO DE OFERTAS ---
 @st.cache_data(ttl=300, show_spinner=False)
-def cargar_catalogo_global(_cv_text, target_t):
-    # Catálogo robusto de ofertas reales indexadas para potenciar la herramienta a nivel global
+def cargar_catalogo_global(_cv_text, target_t, refresh_key):
     ofertas_globales = [
         {
             "title": "Decision Science Intern",
@@ -164,17 +162,10 @@ def cargar_catalogo_global(_cv_text, target_t):
     ]
     
     df_final = pd.DataFrame(ofertas_globales)
-    
-    col_titulo = "title"
-    col_empresa = "company"
-    col_ubicacion = "location"
-    col_url = "job_url"
-    col_desc = "description"
-
     df_final["calculated_score"] = df_final.apply(lambda r: calcular_score_semantico(r, _cv_text, target_t), axis=1)
-    return df_final, col_titulo, col_empresa, col_ubicacion, col_url, col_desc
+    return df_final, "title", "company", "location", "job_url", "description"
 
-df_base, col_titulo, col_empresa, col_ubicacion, col_url, col_desc = cargar_catalogo_global(st.session_state.cv_text, target_title)
+df_base, col_titulo, col_empresa, col_ubicacion, col_url, col_desc = cargar_catalogo_global(st.session_state.cv_text, target_title, st.session_state.refresh_key)
 
 # --- BARRA LATERAL ---
 with st.sidebar:
@@ -191,17 +182,29 @@ with st.sidebar:
         st.warning("⚠️ Módulo PDF desactivado.")
 
     st.markdown("---")
+    st.header("⚙️ Agente Scraper & Core")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🚀 Scrape"):
+            threading.Thread(target=lambda: subprocess.run(["python", "-m", "job_scout.cli", "scrape"]), daemon=True).start()
+            st.toast("Barrido lanzado...")
+    with c2:
+        if st.button("🔄 Refrescar"):
+            st.session_state.refresh_key += 1
+            st.rerun()
+
+    st.markdown("---")
     st.header("🎯 Filtros Tácticos")
-    min_score = st.slider("Match Score Mínimo (%)", 0, 100, 40, 5)
+    min_score = st.slider("Match Score Mínimo (%)", 0, 100, 30, 5)
     ordenar_score = st.checkbox("Ordenar por mayor Match", value=True)
     filtro_texto = st.text_input("🔍 Buscar corporación o rol", "")
     modo_ubicacion = st.radio("📍 Ubicación", ["🌐 Todas", "📍 Solo Madrid", "🌐 Solo Remoto"], index=0)
 
     st.markdown("---")
     with st.expander("🤖 AUDITOR DE CALIDAD (IA)"):
-        top_matches = len(df_base[df_base["calculated_score"] >= 70])
+        top_matches = len(df_base[df_base["calculated_score"] >= 60])
         st.markdown(f"**Total Ofertas Activas:** `{len(df_base)}`")
-        st.markdown(f"**Alta Coincidencia (≥ 70%):** `{top_matches}`")
+        st.markdown(f"**Alta Coincidencia (≥ 60%):** `{top_matches}`")
         st.success("Sistema optimizado y operativo.")
 
 # --- FILTRADO FINAL ---
@@ -272,24 +275,17 @@ with tab_tailor:
     opciones_ofertas = df_filtrado[col_titulo].tolist()
     if opciones_ofertas:
         oferta_seleccionada = st.selectbox("Selecciona la vacante objetivo:", opciones_ofertas)
-        
-        # Obtener descripción de la oferta seleccionada
         fila_sel = df_filtrado[df_filtrado[col_titulo] == oferta_seleccionada].iloc[0]
-        desc_sel = fila_sel[col_desc]
         empresa_sel = fila_sel[col_empresa]
 
         if st.button("✨ Generar Cover Letter y Gap Analysis con IA"):
             with st.spinner("Conectando con el Agente LLM Core... Analizando compatibilidad..."):
-                # Generador inteligente basado en el texto del CV subido y la oferta
-                cv_usuario = st.session_state.cv_text if st.session_state.cv_text else "Perfil cuantitativo con base en economía, modelos de decisión, Python y R."
-                
-                # Análisis de Brecha inteligente
                 st.success("¡Análisis completado con éxito!")
                 
                 st.markdown("#### 🎯 Gap Analysis Estratégico")
                 st.write(f"- **Puesto:** `{oferta_seleccionada}` en **{empresa_sel}**")
                 st.write("- **Alineación Técnica:** Tu perfil cuantitativo encaja perfectamente con los requerimientos analíticos del puesto.")
-                st.write("- **Recomendación clave:** Destaca tu experiencia en modelización econométrica y optimización en los primeros párrafos.")
+                st.write("- **Recomendación clave:** Destaca tu experiencia en modelización econométrica y optimización.")
                 
                 carta_generada = f"""Estimado equipo de selección de {empresa_sel},
 
