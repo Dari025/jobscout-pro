@@ -1,0 +1,65 @@
+# Copia este archivo a busqueda.yaml en tu equipo y completa solo los campos que necesites.
+# No publiques busqueda.yaml: guarda tu CV y tus preferencias privadas.
+# Para Telegram, usa las variables de entorno TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID.
+
+profile:
+  name: ""
+  target_title: "Data Analyst / Business Analyst / Decision Science"
+  resume_text: ""
+  keywords:
+    # Añade aquí términos que reflejen tu perfil real. Ordena por importancia;
+    # la categoría solo pondera el ranking, no certifica tu dominio.
+    critical:
+      - "economics"
+      - "statistics"
+      - "data analysis"
+    strong:
+      - "econometrics"
+      - "business analytics"
+      - "decision science"
+      - "risk analysis"
+    moderate:
+      - "sql"
+      - "forecasting"
+      - "optimization"
+    weak:
+      - "python"
+      - "r"
+      - "power bi"
+      - "tableau"
+  title_signals:
+    - pattern: "data analyst"
+      points: 10
+    - pattern: "business analyst"
+      points: 10
+    - pattern: "product analyst"
+      points: 10
+    - pattern: "decision science"
+      points: 10
+    - pattern: "risk analyst"
+      points: 8
+
+search:
+  terms:
+    - "Data Analyst Intern"
+    - "Junior Data Analyst"
+    - "Business Analyst Intern"
+    - "Product Analyst"
+    - "Decision Science Intern"
+    - "Risk Analyst Intern"
+    - "Quantitative Analyst Intern"
+    - "Business Intelligence Analyst"
+  locations:
+    - "Madrid, Spain"
+    - "Remote, Europe"
+  work_types:
+    - "Internship"
+    - "Part-time"
+    - "Remote"
+
+scoring:
+  min_alert_score: 45
+  min_display_score: 20
+
+# Opcional: ruta absoluta a la base SQLite correcta.
+# db_path: "C:/Users/tu_usuario/AppData/Local/job_scout/jobs.db"

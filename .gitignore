@@ -230,3 +230,9 @@ docs/
 # AI assistant instructions
 CLAUDE.md
 .claude/
+
+# Personal search profile and credentials; never commit these files
+busqueda.yaml
+busqueda.local.yaml
+.env.*
+!.env.example

@@ -1,319 +1,266 @@
+from __future__ import annotations
+
+import importlib.util
 import os
-import sqlite3
 import subprocess
-import threading
+import sys
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
 import streamlit as st
-import yaml
-from pathlib import Path
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
-# Intento de carga de PyPDF para lectura de CV
-try:
-    from pypdf import PdfReader
-    PDF_ENABLED = True
-except ImportError:
-    PDF_ENABLED = False
+# Enable the repository src-layout when running from a local checkout.
+SRC_DIR = Path(__file__).resolve().parent / "src"
+if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(
-    page_title="JobScout AI // Global Career Engine",
-    page_icon="💼",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+from jobscout_links import canonicalize_row, choose_job_links, load_config, load_jobs_from_sqlite, score_job
 
-# --- INICIALIZACIÓN DE ESTADO DINÁMICO ---
-if "saved_jobs" not in st.session_state:
-    st.session_state.saved_jobs = []
+st.set_page_config(page_title="JobScout Pro", page_icon="💼", layout="wide", initial_sidebar_state="expanded")
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.stApp { background-color: #0b0f17; color: #e2e8f0; }
+[data-testid="stSidebar"] { background-color: #111827; border-right: 1px solid #1e293b; }
+h1, h2, h3 { color: #f8fafc !important; font-weight: 700 !important; }
+.job-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 18px; margin: 10px 0; }
+.score { font-size: 1.05rem; font-weight: 700; color: #7dd3fc; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("💼 JobScout Pro")
+st.caption("Buscador y priorizador de vacantes. El porcentaje es un índice de relevancia, no una probabilidad de contratación.")
+
+config, config_path = load_config()
+profile = config.get("profile", {}) if isinstance(config.get("profile", {}), dict) else {}
 if "cv_text" not in st.session_state:
-    st.session_state.cv_text = ""
+    st.session_state.cv_text = str(profile.get("resume_text", "") or "")
+if "saved_jobs" not in st.session_state:
+    st.session_state.saved_jobs = {}
 if "refresh_key" not in st.session_state:
     st.session_state.refresh_key = 0
+if "target_title" not in st.session_state:
+    st.session_state.target_title = str(profile.get("target_title", "") or "Data Analyst")
 
-# --- ESTILOS VISUALES CLEAN SAAS (B2B MODERN) ---
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .stApp { background-color: #0b0f17; color: #e2e8f0; }
-    [data-testid="stSidebar"] { background-color: #111827; border-right: 1px solid #1e293b; }
-    h1, h2, h3 { color: #f8fafc !important; font-weight: 700 !important; letter-spacing: -0.02em; }
-    
-    .saas-card {
-        background-color: #1e293b; border: 1px solid #334155; border-radius: 8px;
-        padding: 20px; margin-bottom: 16px; transition: all 0.2s ease;
-    }
-    .saas-card:hover { border-color: #3b82f6; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-    
-    .metric-box { background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; text-align: center; }
-    .metric-box h4 { margin: 0; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
-    .metric-box h2 { margin: 6px 0 0 0; font-size: 1.5rem !important; color: #38bdf8 !important; }
-    
-    .stButton>button { background-color: #2563eb !important; color: #ffffff !important; font-weight: 600 !important; border-radius: 6px !important; border: none !important; width: 100%; }
-    .stButton>button:hover { background-color: #1d4ed8 !important; }
-    
-    .score-badge-high { background-color: #064e3b; color: #34d399; border: 1px solid #059669; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.9em; }
-    .score-badge-mid { background-color: #451a03; color: #fbbf24; border: 1px solid #d97706; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.9em; }
-    .score-badge-low { background-color: #450a0a; color: #f87171; border: 1px solid #b91c1c; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.9em; }
-    
-    .tag-badge { background-color: #0f172a; border: 1px solid #334155; color: #94a3b8; padding: 3px 8px; border-radius: 4px; font-size: 0.75em; margin-right: 4px; display: inline-block; font-weight: 600;}
-    </style>
-""",
-    unsafe_allow_html=True,
-)
-
-# --- CABECERA ---
-st.markdown("<h1>💼 JobScout AI <span style='font-size: 0.5em; color: #38bdf8; background: #0c4a6e; padding: 4px 8px; border-radius: 4px; vertical-align: middle;'>UNIVERSAL PRO</span></h1>", unsafe_allow_html=True)
-st.markdown("<p style='color: #94a3b8; margin-top: -15px;'>Motor de Inteligencia Artificial Multiusuario para Análisis y Matching de Empleo</p>", unsafe_allow_html=True)
-
-# --- LECTOR DE PDF UNIVERSAL ---
-def extraer_texto_pdf(file):
-    if not PDF_ENABLED: return ""
-    try:
-        reader = PdfReader(file)
-        return " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    except Exception:
-        return ""
-
-target_title = "Decision Science Intern"
-
-# --- ALGORITMO DE SCORING SEMÁNTICO HÍBRIDO ---
-def calcular_score_semantico(row, resume_body, target_t):
-    titulo = str(row.get("title", "")).lower()
-    desc = str(row.get("description", "")).lower()
-    empresa = str(row.get("company", "")).lower()
-    texto_oferta = f"{titulo} {empresa} {desc}"
-
-    if not desc or len(desc) < 20: return 15
-
-    # Si el usuario ha subido un CV propio, priorizamos su contenido para el vector
-    doc_cv = f"{target_t} {resume_body}" if resume_body else f"{target_t} python sql analytics r data science"
-    try:
-        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
-        tfidf = vectorizer.fit_transform([doc_cv, texto_oferta])
-        sim_bruta = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0]
-    except Exception:
-        sim_bruta = 0.0
-
-    score_vectorial = min(100.0, (sim_bruta / 0.25) * 100)
-
-    score_titulo = 0
-    if target_t:
-        w_target = [w.lower() for w in target_t.split() if len(w) > 3 and w != "intern"]
-        if w_target:
-            matches_t = sum(1 for w in w_target if w in titulo)
-            score_titulo = (matches_t / len(w_target)) * 100
-
-    stack_clave = ["python", "sql", "r", "rstudio", "bayesian", "econometrics", "anova", "spc", "tableau", "power bi", "remote"]
-    matches_stack = sum(1 for kw in stack_clave if kw in texto_oferta)
-    score_stack = min(100.0, (matches_stack / 4) * 100)
-
-    score_final = (score_vectorial * 0.45) + (score_titulo * 0.35) + (score_stack * 0.20)
-    return int(max(15, min(98, score_final)))
-
-# --- CARGA DE DATOS MASIVA Y DINÁMICA ---
-@st.cache_data(ttl=300, show_spinner=False)
-def cargar_base_datos_global(_cv_text, target_t, refresh_key):
-    # Intentamos leer base de datos local si existe en disco o entorno
-    rutas_db = [Path("busqueda.db"), Path("jobs.db"), Path("src/job_scout/jobs.db")]
-    df_final = pd.DataFrame()
-    
-    for db in rutas_db:
-        if db.exists():
-            try:
-                conn = sqlite3.connect(db)
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                tablas = [t[0] for t in cursor.fetchall() if not t[0].startswith("sqlite_")]
-                for t in tablas:
-                    df_temp = pd.read_sql(f"SELECT * FROM {t}", conn)
-                    if not df_temp.empty:
-                        df_final = df_temp
-                        conn.close()
-                        break
-                if not df_final.empty: break
-                conn.close()
-            except: pass
-
-    # Si no hay DB física o está vacía, cargamos un pool masivo y diversificado de ofertas reales del mercado
-    if df_final.empty:
-        pool_masivo = [
-            {"title": "Decision Science Intern", "company": "TechCorp Global", "location": "Madrid, Spain (Hybrid)", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Decision%20Science", "description": "Sólidas bases en Python, SQL, modelos bayesianos y econometría para optimización de negocio."},
-            {"title": "Junior Quantitative Analyst", "company": "Madrid Capital Management", "location": "Madrid, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Quantitative%20Analyst", "description": "R, RStudio, series temporales, econometría empírica y modelización estadística estocástica."},
-            {"title": "Operations Research Analyst", "company": "Global Logistics Europe", "location": "Remote / Worldwide", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Operations%20Research", "description": "Optimización de cadenas de suministro mediante programación lineal y control estadístico SPC."},
-            {"title": "Business Intelligence Engineer", "company": "Innova Solutions", "location": "Barcelona, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Business%20Intelligence", "description": "Dashboards avanzados en Power BI y Tableau, consultas complejas en SQL y Python."},
-            {"title": "Junior Data Scientist", "company": "AI Research Labs", "location": "Remote (Europe)", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Data%20Scientist", "description": "Machine learning predictivo, Python, scikit-learn y modelado bayesiano aplicado."},
-            {"title": "Risk & Decision Systems Analyst", "company": "EuroFintech Group", "location": "Madrid, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Risk%20Analyst", "description": "Sistemas de decisión automatizados, ANOVA y regresión lineal avanzada."},
-            {"title": "Econometrician & Data Modeler", "company": "Economic Insights Europe", "location": "Madrid, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Econometrician", "description": "Modelos econométricos avanzados, evaluación de impacto y bases de datos masivas con R."},
-            {"title": "Supply Chain Analytics Intern", "company": "SEUR Logistics", "location": "Madrid, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Supply%20Chain%20Analytics", "description": "Optimización de rutas, control de operaciones logísticas y análisis cuantitativo en R y SQL."},
-            {"title": "Statistical Analyst & SPC Specialist", "company": "Quality Industrial Data", "location": "Remote / Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Statistical%20Analyst", "description": "Control estadístico de procesos (SPC), ANOVA y diseño de experimentos en RStudio."},
-            {"title": "Machine Learning Engineer Intern", "company": "Neural Networks Spain", "location": "Madrid, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Machine%20Learning", "description": "Desarrollo de pipelines de datos en Python, despliegue de modelos y optimización algorítmica."},
-            {"title": "Financial Data Analyst", "company": "Santander Digital", "location": "Madrid, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Financial%20Data%20Analyst", "description": "Análisis financiero cuantitativo, SQL avanzado, modelado de riesgos y reporting ejecutivo."},
-            {"title": "Pricing & Revenue Analyst", "company": "Amadeus IT Group", "location": "Madrid, Spain", "job_url": "https://www.linkedin.com/jobs/search/?keywords=Pricing%20Analyst", "description": "Modelos de elasticidad de precios, optimización de ingresos con Python, R y SQL."}
-        ]
-        df_final = pd.DataFrame(pool_masivo)
-
-    # Identificar columnas
-    c_tit = next((c for c in ["title", "job_title", "nombre", "puesto"] if c in df_final.columns), df_final.columns[0])
-    c_emp = next((c for c in ["company", "company_name", "empresa"] if c in df_final.columns), df_final.columns[1])
-    c_ubi = next((c for c in ["location", "ubicacion", "city"] if c in df_final.columns), None)
-    c_url = next((c for c in ["job_url", "url", "link"] if c in df_final.columns), None)
-    c_dsc = next((c for c in ["description", "descripcion", "summary"] if c in df_final.columns), None)
-
-    # Cálculo dinámico de Match personalizado según el CV subido
-    df_final["calculated_score"] = df_final.apply(lambda r: calcular_score_semantico(r, _cv_text, target_t), axis=1)
-    return df_final, c_tit, c_emp, c_ubi, c_url, c_dsc
-
-df_base, col_titulo, col_empresa, col_ubicacion, col_url, col_desc = cargar_base_datos_global(st.session_state.cv_text, target_title, st.session_state.refresh_key)
-
-# --- BARRA LATERAL MULTIUSUARIO ---
 with st.sidebar:
-    st.header("📄 Agente Ingestión CV (Universal)")
-    if PDF_ENABLED:
-        uploaded_cv = st.file_uploader("Sube CUALQUIER CV en PDF", type="pdf")
-        st.markdown("<p style='font-size: 0.75em; color: #94a3b8;'>RGPD Compliance: Procesamiento efímero en memoria para este usuario.</p>", unsafe_allow_html=True)
-        consentimiento = st.checkbox("Acepto la política de privacidad.")
-        
-        if uploaded_cv and consentimiento:
-            st.session_state.cv_text = extraer_texto_pdf(uploaded_cv)
-            st.success("✅ CV analizado. Match personalizado activo.")
-            st.session_state.refresh_key += 1
-    else:
-        st.warning("⚠️ Módulo PDF no disponible.")
+    st.header("Perfil")
+    target_title = st.text_input("Puestos objetivo", key="target_title",
+        help="Se usa junto con las keywords configuradas; no se presupone que domines una tecnología.")
+    uploaded_cv = st.file_uploader("Añadir CV en PDF (opcional)", type=["pdf"])
+    consent = st.checkbox("Acepto procesar el texto del CV en esta sesión.")
+    if uploaded_cv and consent:
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(uploaded_cv)
+            extracted = "\n".join((page.extract_text() or "") for page in reader.pages)
+            if extracted.strip():
+                st.session_state.cv_text = extracted
+                st.success("Texto del CV leído para esta sesión.")
+            else:
+                st.warning("No se ha podido extraer texto del PDF. Comprueba si es un escaneo.")
+        except ImportError:
+            st.warning("Falta pypdf. Instálalo con: pip install pypdf")
+        except Exception as exc:
+            st.error(f"No se ha podido leer el PDF: {exc}")
 
-    st.markdown("---")
-    st.header("⚙️ Panel de Operaciones")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🚀 Scrape"):
-            threading.Thread(target=lambda: subprocess.run(["python", "-m", "job_scout.cli", "scrape"]), daemon=True).start()
-            st.toast("Barrido de red lanzado en segundo plano...")
-    with c2:
-        if st.button("🔄 Refrescar"):
+    min_score = st.slider("Índice mínimo de relevancia", 0, 100, 20, 5)
+    search_text = st.text_input("Buscar por puesto, empresa o ubicación", "")
+    location_filter = st.selectbox("Ubicación", ["Todas", "Madrid", "Remoto / Europa"])
+    sort_by_score = st.checkbox("Ordenar por relevancia", value=True)
+    st.divider()
+    left, right = st.columns(2)
+    with left:
+        if st.button("🔄 Actualizar datos", use_container_width=True):
             st.session_state.refresh_key += 1
             st.rerun()
+    with right:
+        scrape_clicked = st.button("🚀 Buscar ofertas", use_container_width=True)
 
-    st.markdown("---")
-    st.header("🎯 Filtros Tácticos")
-    min_score = st.slider("Match Score Mínimo (%)", 0, 100, 20, 5)
-    ordenar_score = st.checkbox("Ordenar por mayor Match", value=True)
-    filtro_texto = st.text_input("🔍 Buscar puesto o empresa", "")
-    modo_ubicacion = st.radio("📍 Ubicación", ["🌐 Todas", "📍 Solo Madrid", "🌐 Solo Remoto"], index=0)
+    if scrape_clicked:
+        try:
+            module_available = importlib.util.find_spec("job_scout.cli") is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            module_available = False
+        if not module_available:
+            st.error("No se encuentra el módulo job_scout.cli. El repositorio público no incluye src/job_scout, por lo que este botón no puede iniciar una nueva búsqueda en una instalación basada solo en GitHub. No se inventarán ofertas.")
+        else:
+            config_arg = os.getenv("JOBSCOUT_CONFIG", "busqueda.yaml")
+            command = [sys.executable, "-m", "job_scout.cli"]
+            if Path(config_arg).is_file():
+                command += ["--config", config_arg]
+            command += ["scrape"]
+            with st.spinner("Buscando ofertas en las fuentes configuradas…"):
+                try:
+                    completed = subprocess.run(command, cwd=Path(__file__).resolve().parent,
+                        capture_output=True, text=True, timeout=300, check=False)
+                    if completed.returncode == 0:
+                        st.success("Recogida terminada. Actualiza los datos para ver los resultados.")
+                        if completed.stdout.strip():
+                            st.code(completed.stdout[-4000:])
+                        st.session_state.refresh_key += 1
+                        st.rerun()
+                    else:
+                        st.error(f"La recogida terminó con código {completed.returncode}.")
+                        st.code((completed.stderr or completed.stdout or "Sin diagnóstico")[-4000:])
+                except subprocess.TimeoutExpired:
+                    st.error("La recogida superó el límite de 5 minutos. Revisa el log del scraper.")
+                except OSError as exc:
+                    st.error(f"No se pudo ejecutar el scraper: {exc}")
 
-    st.markdown("---")
-    with st.expander("🤖 AUDITOR DE CALIDAD"):
-        top_matches = len(df_base[df_base["calculated_score"] >= 50])
-        st.markdown(f"**Total Vacantes en Motor:** `{len(df_base)}`")
-        st.markdown(f"**Alta Coincidencia (≥ 50%):** `{top_matches}`")
-        st.success("Motor semántico activo.")
+    with st.expander("Configuración y diagnóstico"):
+        st.write(f"Archivo de configuración cargado: {config_path or 'ninguno'}")
+        st.write("Ruta SQLite: variable JOBSCOUT_DB_PATH, db_path configurado o rutas conocidas.")
+        if not st.session_state.cv_text:
+            st.info("No hay texto de CV disponible. El ranking utilizará solo los puestos objetivo y las keywords configuradas.")
 
-# --- FILTRADO INTERactivo ---
-df_filtrado = df_base.copy()
-df_filtrado = df_filtrado[df_filtrado["calculated_score"] >= min_score]
-if ordenar_score: df_filtrado = df_filtrado.sort_values(by="calculated_score", ascending=False)
-if filtro_texto:
-    df_filtrado = df_filtrado[df_filtrado[col_titulo].str.contains(filtro_texto, case=False, na=False) | df_filtrado[col_empresa].str.contains(filtro_texto, case=False, na=False)]
-if modo_ubicacion == "📍 Solo Madrid": df_filtrado = df_filtrado[df_filtrado[col_ubicacion].str.contains("Madrid", case=False, na=False)]
-elif modo_ubicacion == "🌐 Solo Remoto": df_filtrado = df_filtrado[df_filtrado[col_ubicacion].str.contains("Remote|Worldwide", case=False, na=False)]
+# Read actual stored rows only. Empty DB = empty dashboard, never made-up vacancies.
+raw_jobs, db_diagnostics = load_jobs_from_sqlite(config)
+for diagnostic in db_diagnostics:
+    st.sidebar.caption(diagnostic)
+if not raw_jobs:
+    st.warning("No se han encontrado vacantes reales en la base de datos. No se mostrarán ofertas de ejemplo como si fueran oportunidades de empleo.")
+    st.info("Comprueba que el scraper haya terminado y revisa la ruta de la base de datos. Puedes definir JOBSCOUT_DB_PATH o db_path en una configuración local.")
+    st.stop()
 
-# --- INTERFAZ PRINCIPAL (TABS) ---
-tab_dash, tab_tailor, tab_saved = st.tabs(["📊 Dashboard de Vacantes", "🤖 Agente CV Tailor (IA)", "📑 Mis Guardados"])
-
-with tab_dash:
-    hud1, hud2, hud3, hud4 = st.columns(4)
-    hud1.markdown(f"<div class='metric-box'><h4>VACANTES DISPONIBLES</h4><h2>{len(df_filtrado)}</h2></div>", unsafe_allow_html=True)
-    hud2.markdown(f"<div class='metric-box'><h4>ESTADO CV</h4><h2>{'CARGADO' if st.session_state.cv_text else 'ESTÁNDAR'}</h2></div>", unsafe_allow_html=True)
-    hud3.markdown(f"<div class='metric-box'><h4>MOTOR</h4><h2>ACTIVO</h2></div>", unsafe_allow_html=True)
-    
-    csv_data = df_filtrado.to_csv(index=False).encode('utf-8')
-    with hud4:
-        st.download_button(label="📥 Exportar CSV", data=csv_data, file_name='jobscout_leads.csv', mime='text/csv', use_container_width=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    for idx, row in df_filtrado.iterrows():
-        t = row.get(col_titulo, "Sin título")
-        e = row.get(col_empresa, "Confidencial")
-        u = row.get(col_ubicacion, "No especificada")
-        url = row.get(col_url, "https://www.linkedin.com/jobs/")
-        d = str(row.get(col_desc, ""))
-        s = int(row.get("calculated_score", 0))
-
-        b_class = "score-badge-high" if s >= 70 else "score-badge-mid" if s >= 50 else "score-badge-low"
-        stack_detected = [kw.upper() for kw in ["python", "r", "sql", "bayesian", "econometrics", "spc", "remote"] if kw in d.lower()]
-
-        st.markdown(
-            f"""
-            <div class="saas-card">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                    <div>
-                        <h3 style="margin: 0; font-size: 1.15em;">{t}</h3>
-                        <p style="color: #94a3b8; font-size: 0.9em; margin: 4px 0 10px 0;"><b>{e}</b> &nbsp;•&nbsp; 📍 {u}</p>
-                        {''.join([f"<span class='tag-badge'>{kw}</span>" for kw in stack_detected])}
-                    </div>
-                    <div class="{b_class}">{s}% MATCH</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True
-        )
-
-        cc1, cc2, cc3 = st.columns([2, 2, 8])
-        with cc1:
-            st.link_button("🔗 Ver Oferta Directa", url)
-        with cc2:
-            if st.button("⭐ Guardar", key=f"save_{idx}"):
-                if t not in [j['titulo'] for j in st.session_state.saved_jobs]:
-                    st.session_state.saved_jobs.append({'titulo': t, 'empresa': e, 'url': url, 'score': s})
-                    st.toast(f"Guardado: {t}")
-        with st.expander("📄 Ver descripción completa"):
-            st.write(d)
-
-with tab_tailor:
-    st.markdown("### 🤖 Generador de Cartas de Presentación y Adaptación por IA")
-    st.info("Selecciona una vacante para generar al instante tu carta de presentación personalizada adaptada al CV que hayas subido.")
-    
-    opciones_ofertas = df_filtrado[col_titulo].tolist()
-    if opciones_ofertas:
-        oferta_seleccionada = st.selectbox("Selecciona la vacante objetivo:", opciones_ofertas)
-        fila_sel = df_filtrado[df_filtrado[col_titulo] == oferta_seleccionada].iloc[0]
-        empresa_sel = fila_sel[col_empresa]
-
-        if st.button("✨ Generar Cover Letter Personalizada"):
-            with st.spinner("Procesando perfil y redactando carta con IA..."):
-                carta_generada = f"""Estimado equipo de selección de {empresa_sel},
-
-Escribo para manifestar mi firme interés en la posición de {oferta_seleccionada}. Tras analizar los requerimientos del puesto, considero que mi perfil cuantitativo y experiencia práctica en análisis de datos, modelización y toma de decisiones se alinean directamente con los objetivos de su organización.
-
-A lo largo de mi trayectoria he desarrollado competencias técnicas avanzadas que me permiten transformar requerimientos complejos en soluciones operativas eficaces. Me entusiasma enormemente la posibilidad de aportar rigor analítico en {empresa_sel}.
-
-Agradezco de antemano su tiempo y consideración, y quedo a su disposición para profundizar en los detalles de mi candidatura en una entrevista.
-
-Atentamente,
-Candidato"""
-
-                st.markdown("#### 📝 Borrador de Carta de Presentación")
-                st.text_area("Copia tu carta lista para enviar:", carta_generada, height=200)
+jobs: list[dict[str, Any]] = []
+seen: set[str] = set()
+for raw in raw_jobs:
+    job = canonicalize_row(raw)
+    title = str(job.get("title") or "").strip()
+    company = str(job.get("company") or "").strip()
+    if not title or not company:
+        continue
+    source_url, apply_url = choose_job_links(job)
+    job["job_url"], job["job_url_direct"] = source_url, apply_url
+    job["has_specific_link"] = bool(source_url or apply_url)
+    job_id = str(job.get("id") or "").strip()
+    source = str(job.get("source") or "").strip().lower()
+    if job_id:
+        identity = f"id:{source}:{job_id}"
+    elif source_url or apply_url:
+        identity = f"url:{(source_url or apply_url).rstrip('/')}"
     else:
-        st.warning("No hay ofertas disponibles para generar la carta.")
+        identity = "text:" + "|".join(str(job.get(key) or "").strip().casefold()
+            for key in ("title", "company", "location", "date_posted"))
+    if identity in seen:
+        continue
+    seen.add(identity)
+    jobs.append(job)
 
-with tab_saved:
-    st.markdown("### 📑 Mis Vacantes Guardadas")
-    if not st.session_state.saved_jobs:
-        st.write("No has guardado ninguna oferta todavía. Usa el botón ⭐ en el Dashboard.")
-    else:
-        for job in st.session_state.saved_jobs:
-            st.markdown(f"**{job['score']}%** | {job['titulo']} en *{job['empresa']}* - [🔗 Aplicar]({job['url']})")
+scoring_config = dict(config)
+scoring_config["profile"] = {**profile, "target_title": target_title}
+for job in jobs:
+    job["calculated_score"] = score_job(job, scoring_config, st.session_state.cv_text)
 
-# --- FOOTER LEGAL Y COMPLIANCE ---
-st.markdown("---")
-c_leg1, c_leg2, c_leg3 = st.columns([2,2,1])
-with c_leg1:
-    st.markdown("<p style='font-size: 0.75em; color: #64748b;'><b>© 2026 JobScout AI Platform.</b><br>Motor multiusuario de empleo y análisis semántico.</p>", unsafe_allow_html=True)
-with c_leg2:
-    st.markdown("<p style='font-size: 0.75em; color: #64748b;'><b>Privacidad por Diseño (GDPR):</b><br>Procesamiento efímero en memoria por sesión.</p>", unsafe_allow_html=True)
-with c_leg3:
-    with st.popover("📜 Términos"):
-        st.markdown("**ToS**\n\nHerramienta abierta de análisis de compatibilidad profesional.")
+df_all = pd.DataFrame(jobs)
+df = df_all[df_all["calculated_score"] >= min_score].copy()
+if search_text:
+    searchable = (df["title"].fillna("").astype(str) + " " +
+        df["company"].fillna("").astype(str) + " " + df["location"].fillna("").astype(str))
+    df = df[searchable.str.contains(search_text, case=False, na=False, regex=False)]
+location_values = df["location"].fillna("").astype(str)
+if location_filter == "Madrid":
+    df = df[location_values.str.contains("madrid", case=False, na=False)]
+elif location_filter == "Remoto / Europa":
+    df = df[location_values.str.contains(r"remote|remoto|europe|europa|worldwide|anywhere", case=False, na=False)]
+if sort_by_score:
+    df = df.sort_values(["calculated_score", "title"], ascending=[False, True], kind="stable")
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Ofertas únicas", len(df_all))
+m2.metric("Con enlace específico", int(df_all["has_specific_link"].sum()))
+m3.metric("Índice ≥ 70", int((df_all["calculated_score"] >= 70).sum()))
+m4.metric("Tras filtros", len(df))
+st.caption("La comprobación descarta direcciones de búsqueda y páginas genéricas conocidas. No garantiza que una vacante siga activa o que el portal no haya cambiado su contenido.")
+
+if df.empty:
+    st.info("No hay ofertas con los filtros actuales. Reduce el índice mínimo o cambia la búsqueda.")
+else:
+    st.subheader(f"Vacantes ({len(df)})")
+    st.download_button("📥 Exportar resultados CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="jobscout_resultados.csv", mime="text/csv")
+    for display_index, (_, row) in enumerate(df.iterrows()):
+        title = str(row.get("title") or "Puesto sin título")
+        company = str(row.get("company") or "Empresa sin especificar")
+        location = str(row.get("location") or "Ubicación no especificada")
+        description = str(row.get("description") or "").strip()
+        score = int(row.get("calculated_score") or 0)
+        source_url, apply_url = choose_job_links(row.to_dict())
+        identity = str(row.get("id") or source_url or apply_url or f"{title}|{company}|{location}")
+        with st.container():
+            st.markdown('<div class="job-card">', unsafe_allow_html=True)
+            c_title, c_score = st.columns([5, 1])
+            with c_title:
+                st.subheader(title)
+                st.write(f"**{company}** · {location}")
+            with c_score:
+                st.markdown(f'<div class="score">{score}/100</div>', unsafe_allow_html=True)
+            if description:
+                st.write(description[:700] + ("…" if len(description) > 700 else ""))
+            else:
+                st.warning("Esta oferta no tiene descripción guardada; la puntuación puede ser poco informativa.")
+            l1, l2, l3 = st.columns([2, 2, 2])
+            with l1:
+                if source_url:
+                    st.link_button("Abrir anuncio original", source_url, use_container_width=True)
+                else:
+                    st.caption("Sin enlace original específico")
+            with l2:
+                if apply_url and apply_url != source_url:
+                    st.link_button("Ir a candidatura", apply_url, use_container_width=True)
+                elif source_url:
+                    st.caption("Solicita desde el anuncio original")
+                else:
+                    st.caption("Sin enlace de candidatura validable")
+            with l3:
+                if st.button("⭐ Guardar", key=f"save_{display_index}_{hash(identity)}", use_container_width=True):
+                    st.session_state.saved_jobs[identity] = {
+                        "title": title, "company": company, "location": location,
+                        "score": score, "job_url": source_url, "job_url_direct": apply_url,
+                    }
+                    st.toast("Vacante guardada en esta sesión.")
+            with st.expander("Ver datos y diagnóstico del enlace"):
+                st.write(f"Fuente: {row.get('source') or 'No indicada'}")
+                st.write(f"Fecha: {row.get('date_posted') or 'No indicada'}")
+                if source_url:
+                    st.write(f"Anuncio: {source_url}")
+                if apply_url and apply_url != source_url:
+                    st.write(f"Candidatura: {apply_url}")
+                if not (source_url or apply_url):
+                    st.warning("No se muestra un enlace genérico. Revisa el registro de origen en la base de datos.")
+                st.write("La comprobación es estructural; para verificar identidad y vigencia hay que consultar la fuente.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+st.divider()
+st.subheader("⭐ Vacantes guardadas (solo esta sesión)")
+if not st.session_state.saved_jobs:
+    st.caption("Todavía no has guardado ninguna vacante.")
+else:
+    for saved in st.session_state.saved_jobs.values():
+        st.markdown(f"**{saved['title']}** — {saved['company']} · {saved['location']} · índice {saved['score']}/100")
+        src = saved.get("job_url") or ""
+        apply = saved.get("job_url_direct") or ""
+        if src:
+            st.link_button("Abrir anuncio guardado", src, key=f"saved-src-{abs(hash(src))}")
+        elif apply:
+            st.link_button("Abrir candidatura guardada", apply, key=f"saved-app-{abs(hash(apply))}")
+
+st.divider()
+with st.expander("Borrador de carta de presentación (plantilla, no generado por IA)"):
+    st.caption("Completa y revisa el texto antes de utilizarlo. No se atribuyen habilidades no verificadas.")
+    titles = df["title"].tolist()
+    selected = st.selectbox("Puesto", titles, key="letter_title") if titles else ""
+    if selected:
+        selected_row = df[df["title"] == selected].iloc[0]
+        company = str(selected_row.get("company") or "el equipo de selección")
+        user_name = str(profile.get("name") or "[Tu nombre]")
+        letter = (f"Estimado equipo de selección de {company},\n\n"
+            f"Me gustaría presentar mi candidatura al puesto de {selected}. Mi formación en Economía "
+            "y mi especialización en sistemas de decisión me han llevado a interesarme por el análisis "
+            "de datos y la resolución de problemas de negocio. Estoy ampliando mis competencias técnicas "
+            "y me interesa aplicarlas en un entorno profesional.\n\n"
+            "Me gustaría conocer mejor las necesidades del equipo y explicar cómo mi formación podría contribuir al puesto.\n\n"
+            f"Un saludo,\n{user_name}")
+        st.text_area("Borrador editable", letter, height=220)
