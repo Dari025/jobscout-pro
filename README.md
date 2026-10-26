@@ -1,6 +1,8 @@
 # JobScout Pro
 
-JobScout Pro es una aplicación Streamlit para visualizar, filtrar y priorizar ofertas guardadas en una base de datos SQLite. El ranking es un índice orientativo, no una probabilidad de conseguir el empleo.
+JobScout Pro es una aplicación Streamlit para recoger, visualizar, filtrar y priorizar ofertas guardadas en SQLite. El ranking es un índice orientativo, no una probabilidad de conseguir el empleo.
+
+El motor de recogida incluido en `src/job_scout` se basa en [job-scout](https://github.com/weberwcwei/job-scout), distribuido bajo licencia MIT. Consulta `THIRD_PARTY_NOTICES.md`.
 
 ## Estado y límites importantes
 

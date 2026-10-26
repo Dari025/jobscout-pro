@@ -93,8 +93,12 @@ with st.sidebar:
             command += ["scrape"]
             with st.spinner("Buscando ofertas en las fuentes configuradas…"):
                 try:
+                    child_env = os.environ.copy()
+                    # The package uses a src-layout; make it importable in the child CLI process too.
+                    existing_pythonpath = child_env.get("PYTHONPATH", "")
+                    child_env["PYTHONPATH"] = str(SRC_DIR) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
                     completed = subprocess.run(command, cwd=Path(__file__).resolve().parent,
-                        capture_output=True, text=True, timeout=300, check=False)
+                        env=child_env, capture_output=True, text=True, timeout=300, check=False)
                     if completed.returncode == 0:
                         st.success("Recogida terminada. Actualiza los datos para ver los resultados.")
                         if completed.stdout.strip():

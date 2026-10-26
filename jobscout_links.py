@@ -140,6 +140,20 @@ def canonicalize_row(row: dict[str, Any]) -> dict[str, Any]:
             if alias in norm and _text(norm[alias]):
                 result[canonical] = norm[alias]
                 break
+    # The upstream SQLite schema stores structured location components, not a single display field.
+    if not _text(norm.get("location")):
+        location_parts = []
+        for key in ("city", "state", "country"):
+            value = _text(norm.get(key))
+            if value and value not in location_parts:
+                location_parts.append(value)
+        remote_value = _text(norm.get("isremote")).lower()
+        is_remote = remote_value in {"1", "true", "yes", "y", "remote"}
+        result["location"] = ", ".join(location_parts) + (" (Remote)" if is_remote else "")
+    elif _text(norm.get("isremote")) and _text(norm.get("isremote")).lower() in {"1", "true", "yes", "y", "remote"}:
+        if "remote" not in _text(result["location"]).lower():
+            result["location"] = _text(result["location"]) + " (Remote)"
+
     source_url, apply_url = choose_job_links(row)
     result["job_url"] = source_url
     result["job_url_direct"] = apply_url
@@ -193,9 +207,11 @@ def database_candidates(config: dict[str, Any] | None = None, root: Path | None 
     paths.extend([
         root / "jobs.db", root / "busqueda.db", root / "data" / "jobs.db",
         root / "src" / "job_scout" / "jobs.db",
+        home / ".local" / "share" / "job-scout" / "job-scout.db",
         home / ".local" / "share" / "job-scout" / "jobs.db",
         home / ".local" / "share" / "job-scout" / "busqueda.db",
-        home / ".job_scout" / "jobs.db", home / "job_scout" / "jobs.db",
+        home / ".job_scout" / "job-scout.db", home / ".job_scout" / "jobs.db",
+        home / "job_scout" / "job-scout.db", home / "job_scout" / "jobs.db",
     ])
     unique: list[Path] = []
     seen: set[str] = set()

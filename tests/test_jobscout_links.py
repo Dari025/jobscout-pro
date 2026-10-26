@@ -75,3 +75,30 @@ def test_database_loader_uses_jobs_table_and_normalizes_columns(tmp_path):
     assert jobs[0]["company"] == "Example Ltd"
     assert jobs[0]["job_url"].endswith("/123456789/")
     assert any("tabla 'jobs'" in item for item in diagnostics)
+
+def test_sqlite_default_job_scout_database_is_a_candidate(tmp_path, monkeypatch):
+    from jobscout_links import database_candidates
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    candidates = [path.as_posix() for path in database_candidates(root=tmp_path)]
+    assert any(path.endswith("/.local/share/job-scout/job-scout.db") for path in candidates)
+
+
+def test_location_is_assembled_from_upstream_sqlite_fields():
+    row = {
+        "title": "Data Analyst",
+        "company": "Example Ltd",
+        "city": "Madrid",
+        "state": "Community of Madrid",
+        "country": "ES",
+        "is_remote": 1,
+        "url": "https://www.linkedin.com/jobs/view/123456789/",
+    }
+    normalized = canonicalize_row(row)
+    assert "Madrid" in normalized["location"]
+    assert "Community of Madrid" in normalized["location"]
+    assert "ES" in normalized["location"]
+    assert "Remote" in normalized["location"]
