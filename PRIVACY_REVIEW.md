@@ -20,6 +20,8 @@
 
 ## Fuentes y transferencias
 
+- La interfaz utiliza fuentes del sistema y no descarga tipografías desde Google Fonts u otro proveedor externo.
+
 La búsqueda envía a los proveedores de búsqueda los términos del puesto y la ubicación necesarios para consultar vacantes. No envía el texto del CV. Los proveedores de empleo pueden recibir y registrar las consultas HTTP normales de sus servicios. Si el dashboard está desplegado en la nube, el archivo PDF viaja desde el navegador hasta el servidor de la aplicación y el proveedor de alojamiento opera esa infraestructura.
 
 ## Acciones para el usuario
