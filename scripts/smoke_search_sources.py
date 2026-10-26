@@ -5,6 +5,7 @@ availability. It prints counts and checks that returned records have specific UR
 """
 from __future__ import annotations
 
+from collections import Counter
 import sys
 from pathlib import Path
 
@@ -109,9 +110,27 @@ def probe_targeted_searches() -> None:
             try:
                 jobs = scraper.scrape(params)
                 linked = sum(1 for job in jobs if is_specific_job_url(job.url))
+                countries = Counter((job.location.country or "unknown").upper() for job in jobs)
+                remote_count = sum(1 for job in jobs if job.location.is_remote)
+                expected_geo = 0
+                for job in jobs:
+                    city = (job.location.city or "").casefold()
+                    country = (job.location.country or "").upper()
+                    if location == "Madrid, Spain":
+                        if country == "ES" or city == "madrid" or job.location.is_remote:
+                            expected_geo += 1
+                    elif job.location.is_remote:
+                        expected_geo += 1
+                samples = [
+                    f"{job.title} — {job.company} [{job.location.country or 'unknown'}; "
+                    f"remote={job.location.is_remote}]"
+                    for job in jobs[:2]
+                ]
                 print(
                     f"Targeted query {label} | Data Analyst | {location}: "
-                    f"{len(jobs)} results, {linked} with specific vacancy URLs"
+                    f"{len(jobs)} results, {linked} specific URLs, "
+                    f"{remote_count} remote, countries={dict(countries)}, "
+                    f"geography_matches={expected_geo}; samples={samples}"
                 )
             except Exception as exc:
                 print(

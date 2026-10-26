@@ -90,7 +90,9 @@ def quick_search_scope(
     available = set(normalized_sites)
     api_sites = [name for name in QUICK_SITE_PRIORITY if name in available]
     fallback_sites = [name for name in FALLBACK_SITE_PRIORITY if name in available]
-    selected_sites = api_sites if api_sites else fallback_sites[:3]
+    # Use the APIs first in the list, but include two portal fallbacks in quick
+    # mode. A provider can be healthy yet have no listings for a particular niche.
+    selected_sites = (api_sites + fallback_sites[:2]) if api_sites else fallback_sites[:3]
     selected_terms = list(terms[:5])
     selected_locations = list(locations[:2])
     return selected_sites, selected_terms, selected_locations

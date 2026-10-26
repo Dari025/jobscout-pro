@@ -141,6 +141,34 @@ def parse_freehire_job(raw: dict) -> Job | None:
     )
 
 
+def _validate_search_metadata(payload: dict, location: str) -> None:
+    """Fail closed if Freehire silently ignores a requested geography filter."""
+    meta = payload.get("meta") if isinstance(payload, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    ignored = meta.get("ignored_params") or []
+    if not ignored:
+        return
+
+    ignored_text = str(ignored).casefold()
+    log.warning("Freehire ignored search parameter(s): %s", ignored)
+
+    location_text = str(location or "").casefold()
+    if "remote" in location_text and ("europe" in location_text or "eu" in location_text):
+        required = ("regions", "work_mode")
+    elif any(token in location_text for token in ("spain", "españa", "madrid")):
+        required = ("countries",)
+    else:
+        required = ()
+
+    ignored_required = [name for name in required if name.casefold() in ignored_text]
+    if ignored_required:
+        raise RuntimeError(
+            "Freehire ignored required geographic filter(s) "
+            f"{', '.join(ignored_required)} for location {location!r}; "
+            "refusing to show potentially wrong-region postings."
+        )
+
+
 class FreehireScraper(BaseScraper):
     """Reliable first-party ATS search across Spain and remote Europe."""
 
@@ -189,7 +217,10 @@ class FreehireScraper(BaseScraper):
                     raise RuntimeError("Freehire API limit reached (HTTP 429); try again later.")
                 response.raise_for_status()
                 payload = response.json()
-                rows = payload.get("data", []) if isinstance(payload, dict) else []
+                if not isinstance(payload, dict):
+                    raise RuntimeError("Freehire returned an unexpected JSON object.")
+                _validate_search_metadata(payload, params.location)
+                rows = payload.get("data", [])
                 if not isinstance(rows, list):
                     raise RuntimeError("Freehire returned an unexpected JSON response.")
                 for raw in rows:

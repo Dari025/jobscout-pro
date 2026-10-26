@@ -20,7 +20,7 @@ No se garantiza una duración fija: el tiempo depende de la respuesta de cada po
 
 ## Fuentes de búsqueda y diagnóstico
 
-La búsqueda rápida empieza por **Freehire** y **Arbeitnow**, fuentes con respuestas estructuradas, y usa la URL específica del anuncio o la candidatura de origen. La búsqueda completa amplía la cobertura con LinkedIn e Indeed. Google Jobs se omite porque el resultado actual requiere JavaScript y el parser del servidor no puede recogerlo de forma fiable.
+La búsqueda rápida prioriza **Freehire** y **Arbeitnow**, fuentes con respuestas estructuradas, y también consulta LinkedIn e Indeed como respaldo por si la fuente principal no tiene vacantes para una consulta concreta. La búsqueda completa amplía la cobertura con más términos y páginas. Google Jobs se omite porque el resultado actual requiere JavaScript y el parser del servidor no puede recogerlo de forma fiable.
 
 - Freehire publica una API de lectura gratuita para uso personal y no comercial. Si conviertes la app en un servicio ofrecido a otras personas, consulta su licencia y plan de API antes de compartir vacantes de esa fuente.
 - Arbeitnow ofrece un feed de vacantes con enlaces a páginas de anuncio individuales; la aplicación filtra los resultados por puesto y ubicación.

@@ -8,7 +8,7 @@ if str(SRC_DIR) not in sys.path:
 
 from job_scout.models import JobType, Site
 from job_scout.scrapers.arbeitnow import parse_arbeitnow_job
-from job_scout.scrapers.freehire import parse_freehire_job
+from job_scout.scrapers.freehire import _validate_search_metadata, parse_freehire_job
 from job_scout.scrapers.indeed import IndeedScraper
 from job_scout.config import ScrapingConfig
 
@@ -121,3 +121,32 @@ def test_indeed_parser_builds_the_correct_country_specific_job_link():
     assert result is not None
     assert result.url == "https://es.indeed.com/viewjob?jk=abc123"
     assert result.location.country == "ES"
+
+
+def test_freehire_fails_closed_when_country_filter_is_ignored():
+    payload = {
+        "meta": {
+            "ignored_params": [
+                {"param": "countries", "value": "ES", "reason": "unknown facet"}
+            ]
+        }
+    }
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="ignored required geographic filter"):
+        _validate_search_metadata(payload, "Madrid, Spain")
+
+
+def test_freehire_fails_closed_when_remote_region_filter_is_ignored():
+    payload = {"meta": {"ignored_params": ["work_mode"]}}
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="work_mode"):
+        _validate_search_metadata(payload, "Remote, Europe")
+
+
+def test_freehire_warns_but_allows_non_geographic_ignored_params():
+    payload = {"meta": {"ignored_params": ["seniority_include_unspecified"]}}
+    _validate_search_metadata(payload, "Madrid, Spain")

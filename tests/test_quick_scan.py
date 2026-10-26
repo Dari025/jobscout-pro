@@ -15,7 +15,7 @@ def test_quick_scope_prioritizes_api_sources_and_limits_query_volume():
 
     quick_sites, quick_terms, quick_locations = quick_search_scope(sites, terms, locations)
 
-    assert quick_sites == ["freehire", "arbeitnow"]
+    assert quick_sites == ["freehire", "arbeitnow", "linkedin", "indeed"]
     assert quick_terms == terms[:5]
     assert quick_locations == locations[:2]
     # The caller's full-scan configuration is left untouched.
