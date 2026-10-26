@@ -11,6 +11,12 @@ El motor de recogida incluido en `src/job_scout` se basa en [job-scout](https://
 - El dashboard y el motor de recogida `job_scout.cli` están incluidos en este repositorio, dentro de `src/job_scout`.
 - Los sitios de empleo pueden cambiar enlaces, retirar vacantes o aplicar límites. Respeta sus términos de uso.
 
+## Modo multiusuario de la aplicación web
+
+La aplicación web pública arranca con puestos y ubicaciones vacíos: cada visitante introduce su propia búsqueda. Cada sesión del navegador recibe un identificador aleatorio, una configuración temporal y una base SQLite propia; la lectura de ofertas nunca recurre a una base compartida si la base de esa sesión no existe o está vacía. Los datos de un perfil anterior no se usan como valores por defecto.
+
+El CV, si se carga con consentimiento, se mantiene en memoria de la sesión para calcular relevancia y no se escribe en el archivo de configuración del rastreador. Las ofertas guardadas, las búsquedas y la lista de guardadas pertenecen únicamente a esa sesión. El espacio está pensado para la aplicación web compartida; no sustituye a un sistema de autenticación o gestión de cuentas.
+
 ## Modos de búsqueda
 
 - **Rápida** (predeterminada en el dashboard): consulta una selección de fuentes y términos, limita la paginación, reduce los reintentos y no descarga cada descripción de LinkedIn por separado. Está pensada para obtener una primera lista con menos peticiones.

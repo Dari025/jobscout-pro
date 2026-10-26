@@ -138,3 +138,58 @@ def test_canonical_job_identity_preserves_meaningful_application_parameters():
         "job_url": "https://es.indeed.com/viewjob?jk=xyz789",
     }
     assert canonical_job_identity(first) != canonical_job_identity(second)
+
+
+def test_explicit_database_path_never_falls_back_to_another_users_database(tmp_path):
+    shared_db = tmp_path / "jobs.db"
+    with sqlite3.connect(shared_db) as conn:
+        conn.execute(
+            "CREATE TABLE jobs (title TEXT, company TEXT, location TEXT, job_url TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO jobs VALUES (?, ?, ?, ?)",
+            (
+                "Data Scientist",
+                "Someone Else Ltd",
+                "Madrid",
+                "https://www.linkedin.com/jobs/view/987654321/",
+            ),
+        )
+
+    # The current session's database has not been created yet. The reader must
+    # return empty rather than silently loading the older shared database.
+    session_db = tmp_path / "sessions" / "session-a" / "jobs.sqlite"
+    jobs, diagnostics = load_jobs_from_sqlite(
+        {"db_path": str(session_db)}, root=tmp_path
+    )
+
+    assert jobs == []
+    assert any("No encontrada:" in item and str(session_db) in item for item in diagnostics)
+
+
+def test_explicit_empty_database_never_falls_back_to_shared_jobs(tmp_path):
+    shared_db = tmp_path / "jobs.db"
+    with sqlite3.connect(shared_db) as conn:
+        conn.execute(
+            "CREATE TABLE jobs (title TEXT, company TEXT, location TEXT, job_url TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO jobs VALUES (?, ?, ?, ?)",
+            (
+                "Data Scientist",
+                "Another User Ltd",
+                "Madrid",
+                "https://www.linkedin.com/jobs/view/987654322/",
+            ),
+        )
+
+    session_db = tmp_path / "session.sqlite"
+    with sqlite3.connect(session_db) as conn:
+        conn.execute("CREATE TABLE jobs (title TEXT, company TEXT, location TEXT, job_url TEXT)")
+
+    jobs, diagnostics = load_jobs_from_sqlite(
+        {"db_path": str(session_db)}, root=tmp_path
+    )
+
+    assert jobs == []
+    assert any("Sin tabla válida de ofertas" in item for item in diagnostics)

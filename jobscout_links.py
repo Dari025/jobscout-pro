@@ -271,9 +271,20 @@ def database_candidates(config: dict[str, Any] | None = None, root: Path | None 
 
 def load_jobs_from_sqlite(config: dict[str, Any] | None = None,
                           root: Path | None = None) -> tuple[list[dict[str, Any]], list[str]]:
-    """Load the first suitable jobs table; never treat an unrelated table as vacancies."""
+    """Load vacancies, strictly isolating any explicitly configured database path.
+
+    In a multi-user hosted app, an explicit db_path is a privacy boundary: if that
+    session's DB is missing or empty, never fall back to a shared/default DB.
+    """
     diagnostics: list[str] = []
-    for db_path in database_candidates(config, root):
+    configured_path = _text((config or {}).get("db_path"))
+    env_path = _text(os.getenv("JOBSCOUT_DB_PATH"))
+    strict_path = configured_path or env_path
+    if strict_path:
+        paths_to_check = [Path(strict_path).expanduser()]
+    else:
+        paths_to_check = database_candidates(config, root)
+    for db_path in paths_to_check:
         if not db_path.is_file():
             diagnostics.append(f"No encontrada: {db_path}")
             continue

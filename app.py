@@ -8,7 +8,9 @@ import re
 import subprocess
 import sys
 import threading
+import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -27,22 +29,14 @@ from jobscout_links import (  # noqa: E402
     load_jobs_from_sqlite,
     score_job,
 )
+from job_scout.workspace import (  # noqa: E402
+    SEARCH_LOCATION_OPTIONS,
+    build_workspace_config,
+    parse_target_terms,
+    write_workspace_config,
+)
 
-APP_BUILD = "2026.10.26-search-db-7bd5d8a"
-
-
-def _expected_database_path(config_data: dict[str, Any], loaded_config_path: Path | None) -> Path:
-    """Resolve the same SQLite path the CLI uses for this loaded YAML configuration."""
-    configured = str(config_data.get("db_path") or "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    profile_name = str(config_data.get("config_name") or "").strip()
-    if not profile_name:
-        stem = loaded_config_path.stem if loaded_config_path else "config"
-        profile_name = "default" if stem == "config" else stem
-    profile_name = re.sub(r"[^a-zA-Z0-9_-]", "-", profile_name).strip("-").lower() or "default"
-    data_dir = Path.home() / ".local" / "share" / "job-scout"
-    return data_dir / "job-scout.db" if profile_name == "default" else data_dir / f"{profile_name}.db"
+APP_BUILD = "2026.10.26-session-isolation-v1"
 
 
 st.set_page_config(
@@ -92,33 +86,58 @@ st.markdown(
 st.markdown(
     """
     <div class="hero">
-      <div class="eyebrow">✦ Personal career intelligence</div>
-      <div class="hero-title">Menos scroll. Más oportunidades que encajan.</div>
-      <div class="hero-copy">Tu espacio de búsqueda para puestos de datos, analítica y decisión. Reúne vacantes reales, prioriza las más relevantes para tu perfil y conserva a mano las candidaturas que merecen tu tiempo.</div>
-      <div class="hero-chip">RANKING EXPLICABLE · ENLACES ESPECÍFICOS · SIN OFERTAS FICTICIAS</div>
+      <div class="eyebrow">✦ Buscador personalizable de empleo</div>
+      <div class="hero-title">Encuentra oportunidades que encajan contigo.</div>
+      <div class="hero-copy">Empieza desde cero: introduce los puestos y las ubicaciones que te interesan. Tus búsquedas, ofertas y documentos se mantienen separados de los de otras sesiones.</div>
+      <div class="hero-chip">OFERTAS REALES · ENLACES ESPECÍFICOS · ESPACIO AISLADO POR SESIÓN</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-config, config_path = load_config()
-# The CLI and dashboard must read the exact same database. Do not let a fallback
-# scan select another SQLite file from the repository or an old profile.
-expected_db_path = _expected_database_path(config, config_path)
-db_config = {**config, "db_path": str(expected_db_path)}
-profile = config.get("profile", {}) if isinstance(config.get("profile", {}), dict) else {}
-if "cv_text" not in st.session_state:
-    st.session_state.cv_text = str(profile.get("resume_text", "") or "")
-if "saved_jobs" not in st.session_state:
-    st.session_state.saved_jobs = {}
-if "refresh_key" not in st.session_state:
-    st.session_state.refresh_key = 0
-if "target_title" not in st.session_state:
-    st.session_state.target_title = str(profile.get("target_title", "") or "Data Analyst / Business Analyst")
-if "last_scrape" not in st.session_state:
-    st.session_state.last_scrape = None
-if "cv_fingerprint" not in st.session_state:
-    st.session_state.cv_fingerprint = ""
+# The hosted dashboard always starts from the public, neutral template. Never
+# load a developer's private busqueda.yaml/config.yaml into a shared web app.
+template_path = Path(__file__).resolve().parent / "busqueda.example.yaml"
+config, config_path = load_config(template_path)
+
+# Reset state created by older app builds once, so a browser tab cannot retain
+# an old profile, CV, target title, saved list, or old search result state.
+SESSION_SCHEMA = "clean-isolated-workspaces-v1"
+if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
+    for stale_key in (
+        "cv_text", "saved_jobs", "refresh_key", "target_title", "last_scrape",
+        "cv_fingerprint", "scrape_requested", "requested_scan_mode",
+        "target_title_clean", "search_locations_clean", "uploaded_cv_clean",
+        "cv_consent_clean", "min_score_clean", "search_text_clean",
+        "location_filter_clean", "source_filter_clean", "sort_mode_clean",
+        "scan_mode_clean",
+    ):
+        st.session_state.pop(stale_key, None)
+    st.session_state["_workspace_schema"] = SESSION_SCHEMA
+    st.session_state["session_id"] = uuid.uuid4().hex
+
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = uuid.uuid4().hex
+st.session_state.setdefault("cv_text", "")
+st.session_state.setdefault("saved_jobs", {})
+st.session_state.setdefault("refresh_key", 0)
+st.session_state.setdefault("target_title_clean", "")
+st.session_state.setdefault("search_locations_clean", [])
+st.session_state.setdefault("last_scrape", None)
+st.session_state.setdefault("cv_fingerprint", "")
+
+# Each Streamlit browser session gets its own unguessable workspace and SQLite DB.
+# The explicit db_path is strict: the reader must never fall back to another user's DB.
+session_dir = Path(tempfile.gettempdir()) / "jobscout-pro-sessions" / st.session_state["session_id"]
+session_dir.mkdir(parents=True, exist_ok=True)
+session_db_path = session_dir / "jobs.sqlite"
+target_title = str(st.session_state.get("target_title_clean", "") or "")
+search_locations = list(st.session_state.get("search_locations_clean", []) or [])
+workspace_config = build_workspace_config(
+    config, session_dir, target_title, search_locations
+)
+db_config = {**workspace_config, "db_path": str(session_db_path)}
+profile = workspace_config.get("profile", {})
 
 raw_jobs, db_diagnostics = load_jobs_from_sqlite(db_config)
 jobs: list[dict[str, Any]] = []
@@ -209,12 +228,23 @@ with st.sidebar:
     st.caption(f"Motor {APP_BUILD}")
     target_title = st.text_input(
         "Puestos objetivo",
-        key="target_title",
-        help="Se usa para priorizar títulos relacionados; no presupone que domines una tecnología.",
+        key="target_title_clean",
+        placeholder="Ej. Data Analyst, Product Analyst",
+        help="Escribe solo los puestos que quieres buscar, separados por comas. No hay títulos precargados.",
+    )
+    search_locations = st.multiselect(
+        "Ubicaciones para buscar",
+        options=SEARCH_LOCATION_OPTIONS,
+        key="search_locations_clean",
+        help="Elige una o varias ubicaciones. No se selecciona ninguna por defecto.",
     )
 
-    uploaded_cv = st.file_uploader("CV en PDF (opcional)", type=["pdf"])
-    consent = st.checkbox("Acepto procesar el CV en esta sesión.")
+    uploaded_cv = st.file_uploader(
+        "CV en PDF (opcional)", type=["pdf"], key="uploaded_cv_clean"
+    )
+    consent = st.checkbox(
+        "Acepto procesar el CV en esta sesión.", key="cv_consent_clean"
+    )
     if uploaded_cv and consent:
         file_bytes = uploaded_cv.getvalue()
         fingerprint = hashlib.sha256(file_bytes).hexdigest()
@@ -238,13 +268,25 @@ with st.sidebar:
 
     st.divider()
     st.markdown("### Filtros")
-    min_score = st.slider("Relevancia mínima", 0, 100, 20, 5)
-    search_text = st.text_input("Palabra clave", placeholder="Puesto, empresa o ubicación")
-    location_filter = st.selectbox(
-        "Modalidad / zona", ["Todas", "Madrid / España", "Remoto / Europa"]
+    min_score = st.slider("Relevancia mínima", 0, 100, 20, 5, key="min_score_clean")
+    search_text = st.text_input(
+        "Palabra clave", placeholder="Puesto, empresa o ubicación",
+        key="search_text_clean",
     )
-    source_filter = st.multiselect("Fuentes", available_sources, default=available_sources)
-    sort_mode = st.selectbox("Ordenar por", ["Mayor relevancia", "Más recientes"])
+    location_filter = st.selectbox(
+        "Modalidad / zona", ["Todas", "Madrid / España", "Remoto / Europa"],
+        key="location_filter_clean",
+    )
+    source_filter = st.multiselect(
+        "Filtrar por fuentes (vacío = todas)", available_sources,
+        default=available_sources,
+        key="source_filter_clean",
+        help="Si no seleccionas ninguna fuente, se muestran ofertas de todas las fuentes disponibles.",
+    )
+    sort_mode = st.selectbox(
+        "Ordenar por", ["Mayor relevancia", "Más recientes"],
+        key="sort_mode_clean",
+    )
 
     st.divider()
     st.markdown("### Rastreo de ofertas")
@@ -252,36 +294,49 @@ with st.sidebar:
         "Alcance de la búsqueda",
         ["⚡ Rápida", "🔎 Completa"],
         index=0,
+        key="scan_mode_clean",
         help="La rápida hace menos consultas, limita la paginación y evita peticiones individuales de descripción. La completa intenta cubrir más resultados y puede tardar varios minutos.",
     )
     st.caption(
         "Rápida: menos peticiones y resultados iniciales. Completa: más cobertura, aunque las fuentes pueden bloquear o ralentizar consultas."
     )
     if st.button("✦ Buscar oportunidades", type="primary", use_container_width=True):
-        st.session_state["scrape_requested"] = True
-        st.session_state["requested_scan_mode"] = scan_mode
-        st.rerun()
+        if not parse_target_terms(target_title):
+            st.warning("Escribe al menos un puesto objetivo antes de buscar.")
+        elif not search_locations:
+            st.warning("Selecciona al menos una ubicación para buscar.")
+        else:
+            st.session_state["scrape_requested"] = True
+            st.session_state["requested_scan_mode"] = scan_mode
+            st.rerun()
     if st.button("↻ Actualizar resultados", use_container_width=True):
         st.session_state.refresh_key += 1
         st.rerun()
 
     with st.expander("Diagnóstico"):
-        st.write(f"Configuración: {config_path or 'no encontrada'}")
-        st.write(f"Base de datos esperada por el motor: {expected_db_path}")
-        st.write("El panel lee en solo lectura la misma ruta SQLite que utiliza el motor.")
+        st.write(f"Plantilla neutral: {config_path or 'no encontrada'}")
+        st.write(f"Base de datos privada de esta sesión: {session_db_path}")
+        st.write("Cada sesión tiene su propio perfil temporal, archivo de configuración y base de datos.")
         for item in db_diagnostics:
             st.caption(item)
         if not st.session_state.cv_text:
-            st.info("Sin CV: el ranking usa títulos y palabras clave de la configuración.")
+            st.info("Sin CV: el índice usa únicamente los puestos que hayas indicado.")
 
 
 
 if st.session_state.pop("scrape_requested", False):
     scan_mode = st.session_state.get("requested_scan_mode", "⚡ Rápida")
-    env_config = os.getenv("JOBSCOUT_CONFIG", "").strip()
-    config_file = Path(env_config).expanduser() if env_config else config_path
-    if not config_file or not config_file.is_file():
-        st.error("No encuentro un archivo de configuración válido para el scraper.")
+    try:
+        # Write only this session's search settings. CV text is never serialized.
+        config_file = write_workspace_config(
+            config, session_dir, target_title, search_locations
+        )
+    except (OSError, ValueError) as exc:
+        st.error(f"No se ha podido preparar el espacio de búsqueda de esta sesión: {exc}")
+        config_file = None
+
+    if not config_file:
+        pass
     else:
         try:
             module_available = importlib.util.find_spec("job_scout.cli") is not None
@@ -290,21 +345,25 @@ if st.session_state.pop("scrape_requested", False):
         if not module_available:
             st.error("No se encuentra el motor de búsqueda. Comprueba que el despliegue use la rama principal actualizada.")
         else:
-            command = [sys.executable, "-m", "job_scout.cli", "--config", str(config_file.resolve()), "scrape"]
+            command = [
+                sys.executable, "-m", "job_scout.cli",
+                "--config", str(config_file.resolve()), "scrape",
+            ]
             is_quick = scan_mode.startswith("⚡")
             if is_quick:
                 command.append("--quick")
             child_env = os.environ.copy()
             child_env["PYTHONUNBUFFERED"] = "1"
-            # Pass only the target titles typed in the UI; the uploaded CV stays
-            # in Streamlit session state and is never copied into the subprocess env.
+            # Only the user's selected query is passed. The CV stays in Streamlit
+            # session memory and is never sent to the scraper subprocess.
             child_env["JOBSCOUT_TARGET_TITLE"] = target_title
+            child_env.pop("JOBSCOUT_DB_PATH", None)
             existing_pythonpath = child_env.get("PYTHONPATH", "")
             child_env["PYTHONPATH"] = str(SRC_DIR) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
             timeout_seconds = 180 if is_quick else 900
             mode_label = "búsqueda rápida" if is_quick else "búsqueda completa"
             with st.status(f"Ejecutando {mode_label}…", expanded=True) as status:
-                st.write("Conectando con las fuentes configuradas y guardando resultados reales.")
+                st.write("Buscando en las fuentes seleccionadas y guardando ofertas solo en tu espacio.")
                 log_placeholder = st.empty()
                 try:
                     return_code, logs, timed_out, elapsed = _run_scraper_live(
@@ -315,15 +374,15 @@ if st.session_state.pop("scrape_requested", False):
                         log_placeholder,
                     )
                     if timed_out:
-                        message = f"Se alcanzó el límite de {timeout_seconds // 60} min. Se conservarán los resultados que el motor ya haya guardado."
+                        message = f"Se alcanzó el límite de {timeout_seconds // 60} min. Se conservarán los resultados guardados en esta sesión."
                         status.update(label="Búsqueda detenida por tiempo límite", state="error", expanded=True)
                         success = False
                     elif return_code == 0:
-                        message = f"Búsqueda terminada en {elapsed} s. Ya puedes revisar las oportunidades encontradas."
+                        message = f"Búsqueda terminada en {elapsed} s. Ya puedes revisar tus oportunidades."
                         status.update(label="Búsqueda completada", state="complete", expanded=False)
                         success = True
                     elif return_code == 2 and "No valid postings found" in "\n".join(logs):
-                        message = "La búsqueda terminó, pero ninguna fuente entregó vacantes utilizables. Revisa el diagnóstico por fuente y los errores del registro."
+                        message = "Ninguna fuente devolvió vacantes utilizables para estos puestos y ubicaciones. Revisa el diagnóstico por fuente."
                         status.update(label="Sin vacantes válidas: revisa las fuentes", state="error", expanded=True)
                         success = False
                     else:
@@ -350,8 +409,9 @@ if last_scrape:
         with st.expander("Ver registro de la última búsqueda"):
             st.code(last_scrape["logs"], language="text")
 
-scoring_config = dict(config)
-scoring_config["profile"] = {**profile, "target_title": target_title}
+scoring_config = build_workspace_config(
+    config, session_dir, target_title, search_locations
+)
 for job in jobs:
     job["calculated_score"] = score_job(job, scoring_config, st.session_state.cv_text)
 
@@ -381,8 +441,6 @@ if not df.empty:
         )]
     if source_filter:
         df = df[df["source"].fillna("").astype(str).isin(source_filter)]
-    elif available_sources:
-        df = df.iloc[0:0]
     if sort_mode == "Más recientes" and "date_posted" in df.columns:
         df = df.assign(_posted=pd.to_datetime(df["date_posted"], errors="coerce", utc=True))
         df = df.sort_values(["_posted", "calculated_score"], ascending=[False, False], kind="stable")
