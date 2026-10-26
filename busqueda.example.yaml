@@ -52,6 +52,13 @@ search:
   locations:
     - "Madrid, Spain"
     - "Remote, Europe"
+  # Fuentes con cobertura más útil para las búsquedas iniciales.
+  sites:
+    - "google"
+    - "linkedin"
+    - "indeed"
+  results_per_site: 20
+  hours_old: 168
   work_types:
     - "Internship"
     - "Part-time"

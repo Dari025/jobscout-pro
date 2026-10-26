@@ -64,7 +64,7 @@ class LinkedInScraper(BaseScraper):
                 for card in cards:
                     if len(jobs) >= params.results_wanted:
                         break
-                    job = self._parse_card(card, client, fetch_description=True)
+                    job = self._parse_card(card, client, fetch_description=self.config.fetch_descriptions)
                     if job:
                         jobs.append(job)
 

@@ -72,6 +72,20 @@ def _filter_alert_jobs(jobs: list, cfg) -> list:
     ]
 
 
+QUICK_SITE_PRIORITY = ("google", "linkedin", "indeed")
+
+
+def quick_search_scope(
+    sites: list[str], terms: list[str], locations: list[str]
+) -> tuple[list[str], list[str], list[str]]:
+    """Trim a full search into a useful, bounded quick pass without changing full mode."""
+    normalized_sites = [str(value).strip().lower() for value in sites if str(value).strip()]
+    available = set(normalized_sites)
+    prioritized = [name for name in QUICK_SITE_PRIORITY if name in available]
+    selected_sites = prioritized if prioritized else normalized_sites[:3]
+    return selected_sites, list(terms[:4]), list(locations[:2])
+
+
 @app.command()
 def scrape(
     site: str = typer.Option(
@@ -79,6 +93,9 @@ def scrape(
         help="Scrape specific site: linkedin, indeed, google, glassdoor, ziprecruiter, bayt",
     ),
     term: str = typer.Option(None, help="Override search term"),
+    quick: bool = typer.Option(
+        False, "--quick", help="Fast pass: fewer sites/terms/pages and no per-job descriptions"
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Scrape and score but don't persist"
     ),
@@ -94,6 +111,14 @@ def scrape(
     terms = [term] if term else cfg.search.terms
     locations = cfg.search.locations
 
+    if quick:
+        sites, terms, locations = quick_search_scope(sites, terms, locations)
+        cfg.search.results_per_site = min(cfg.search.results_per_site, 10)
+        cfg.scraping.max_pages = 1
+        cfg.scraping.max_retries = 0
+        cfg.scraping.request_timeout = min(cfg.scraping.request_timeout, 8)
+        cfg.scraping.fetch_descriptions = False
+
     new_high_score: list = []
     total_found = 0
     total_new = 0
@@ -106,6 +131,13 @@ def scrape(
         for search_term in terms
         for loc in locations
     ]
+
+    if quick:
+        console.print(
+            f"[bold cyan]Quick scan:[/bold cyan] {len(tasks)} búsquedas, "
+            f"{len(sites)} fuentes, {len(terms)} términos y {len(locations)} ubicaciones; "
+            "descripciones individuales desactivadas para ir más rápido."
+        )
 
     def _run_one(task):
         s_name, s_term, s_loc = task

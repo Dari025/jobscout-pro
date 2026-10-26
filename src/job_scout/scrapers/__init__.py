@@ -60,6 +60,9 @@ class BaseScraper(ABC):
             try:
                 resp = client.get(url, **kwargs)
                 if resp.status_code == 429:
+                    if attempt >= self.config.max_retries:
+                        log.warning(f"429 from {self.site.value}; retry budget exhausted")
+                        return resp
                     wait = min(2**attempt * 10, 60)
                     log.warning(f"429 from {self.site.value}, backing off {wait}s")
                     time.sleep(wait)
@@ -84,6 +87,9 @@ class BaseScraper(ABC):
             try:
                 resp = client.post(url, **kwargs)
                 if resp.status_code == 429:
+                    if attempt >= self.config.max_retries:
+                        log.warning(f"429 from {self.site.value}; retry budget exhausted")
+                        return resp
                     wait = min(2**attempt * 10, 60)
                     log.warning(f"429 from {self.site.value}, backing off {wait}s")
                     time.sleep(wait)
