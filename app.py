@@ -86,10 +86,19 @@ with st.sidebar:
         if not module_available:
             st.error("No se encuentra el módulo job_scout.cli. El repositorio público no incluye src/job_scout, por lo que este botón no puede iniciar una nueva búsqueda en una instalación basada solo en GitHub. No se inventarán ofertas.")
         else:
-            config_arg = os.getenv("JOBSCOUT_CONFIG", "busqueda.yaml")
+            # Use the same config that the dashboard loaded. Otherwise the CLI
+            # falls back to ~/.config/job-scout/config.yaml and fails on hosted Linux.
+            env_config = os.getenv("JOBSCOUT_CONFIG", "").strip()
+            config_file = Path(env_config).expanduser() if env_config else config_path
             command = [sys.executable, "-m", "job_scout.cli"]
-            if Path(config_arg).is_file():
-                command += ["--config", config_arg]
+            if config_file and config_file.is_file():
+                command += ["--config", str(config_file.resolve())]
+            else:
+                st.error(
+                    "No encuentro un archivo de configuración válido para el scraper. "
+                    "Añade busqueda.yaml o configura JOBSCOUT_CONFIG."
+                )
+                st.stop()
             command += ["scrape"]
             with st.spinner("Buscando ofertas en las fuentes configuradas…"):
                 try:

@@ -63,3 +63,6 @@ scoring:
 
 # Opcional: ruta absoluta a la base SQLite correcta.
 # db_path: "C:/Users/tu_usuario/AppData/Local/job_scout/jobs.db"
+
+# Usa la base de datos predeterminada compartida con el dashboard.
+config_name: default
