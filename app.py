@@ -98,6 +98,38 @@ st.markdown(
     .soft-note { color:#9eafc8; font-size:.86rem; line-height:1.5; }
     .score-pill { color:#8fe9f2; font-size:.78rem; letter-spacing:.08em; text-transform:uppercase; font-weight:800; }
     hr { border-color:#25344d; }
+
+    /* Keyboard access, touch targets, and motion preferences. */
+    :focus-visible {
+      outline:3px solid #fff08a !important;
+      outline-offset:3px !important;
+    }
+    a { color:#8defff; text-decoration:underline; text-underline-offset:.16em; }
+    .stLinkButton > a { text-decoration:none; }
+    .stButton > button, .stLinkButton > a, [role="tab"] { min-height:44px; }
+    input, textarea, select, [data-baseweb="select"] { scroll-margin-top:5rem; }
+
+    @media (max-width:768px) {
+      [data-testid="stAppViewContainer"] > .main .block-container {
+        padding:1rem .75rem 2rem;
+      }
+      h1 { font-size:2rem !important; }
+      h2 { font-size:1.35rem !important; }
+      .hero { padding:1.25rem; border-radius:16px; }
+      .hero-title { font-size:1.8rem; }
+      .eyebrow { letter-spacing:.1em; }
+      [data-testid="stMetric"] { padding:.85rem; }
+    }
+
+    @media (prefers-reduced-motion:reduce) {
+      *, *::before, *::after {
+        animation-duration:.01ms !important;
+        animation-iteration-count:1 !important;
+        scroll-behavior:auto !important;
+        transition-duration:.01ms !important;
+      }
+      .stButton > button:hover, .stLinkButton > a:hover { transform:none; }
+    }
     </style>
     """,
     unsafe_allow_html=True,

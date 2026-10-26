@@ -13,3 +13,11 @@ def test_streamlit_dashboard_starts_without_user_data_or_database():
     assert not app_test.exception, "\n".join(
         str(exception.value) for exception in app_test.exception
     )
+
+
+def test_dashboard_includes_accessibility_styles():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert ":focus-visible" in source
+    assert "prefers-reduced-motion:reduce" in source
+    assert "min-height:44px" in source
+    assert "@media (max-width:768px)" in source
