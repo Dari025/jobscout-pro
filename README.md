@@ -15,7 +15,13 @@ El motor de recogida incluido en `src/job_scout` se basa en [job-scout](https://
 
 La aplicación web pública arranca con puestos y ubicaciones vacíos: cada visitante introduce su propia búsqueda. Cada sesión del navegador recibe un identificador aleatorio, una configuración temporal y una base SQLite propia; la lectura de ofertas nunca recurre a una base compartida si la base de esa sesión no existe o está vacía. Los datos de un perfil anterior no se usan como valores por defecto.
 
-El CV, si se carga con consentimiento, se mantiene en memoria de la sesión para calcular relevancia y no se escribe en el archivo de configuración del rastreador. Las ofertas guardadas, las búsquedas y la lista de guardadas pertenecen únicamente a esa sesión. El espacio está pensado para la aplicación web compartida; no sustituye a un sistema de autenticación o gestión de cuentas.
+El selector del CV permanece desactivado hasta que el usuario marque una casilla de consentimiento situada antes de la subida. La extracción del PDF se hace en memoria con límites de 5 MB, 15 páginas y 100.000 caracteres extraídos. El texto del CV no se escribe en la configuración del rastreador ni en SQLite, y el ranking del dashboard no envía el CV a proveedores de empleo ni a modelos externos.
+
+La casilla de consentimiento puede desmarcarse en cualquier momento; al retirarla se borra el texto extraído del estado de la sesión y se reinicia el selector del archivo. El botón «Borrar CV y archivo» permite hacerlo explícitamente.
+
+Las búsquedas y los resultados se guardan en un espacio temporal independiente por sesión. La app intenta eliminar espacios inactivos de más de 24 horas cuando procesa nuevas peticiones; esto no constituye una garantía de borrado físico inmediato de la infraestructura del proveedor de alojamiento.
+
+El espacio está pensado para una beta web compartida y no sustituye a un sistema de autenticación o gestión de cuentas. Consulta [PRIVACY_REVIEW.md](PRIVACY_REVIEW.md) para los flujos de datos y la lista de comprobaciones previas a un lanzamiento comercial.
 
 ## Filtros opcionales y lectura de requisitos
 
@@ -91,9 +97,10 @@ No guardes el token en el repositorio, en capturas de pantalla ni en archivos qu
 ```powershell
 pip install pytest
 python -m pytest -q
+python scripts/simulate_ranking.py
 ```
 
-Las pruebas cubren rechazo de URLs genéricas, separación de enlace del anuncio y de candidatura, cálculo de coincidencias sin falsos positivos con la letra R y carga de la tabla SQLite.
+Las pruebas cubren rechazo de URLs genéricas, separación de enlace del anuncio y de candidatura, coincidencias por palabras completas, carga y aislamiento de SQLite, retirada y límites de CV, aislamiento del entorno del subproceso, arranque de Streamlit y regresiones de ranking. Consulta [SIMULATION_RESULTS.md](SIMULATION_RESULTS.md) para la batería sintética y sus limitaciones.
 
 ## Seguridad
 

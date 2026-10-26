@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import copy
 import re
+import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -95,3 +97,64 @@ def write_workspace_config(
         encoding="utf-8",
     )
     return config_path
+
+
+
+def touch_session_workspace(
+    sessions_root: str | Path,
+    session_dir: str | Path,
+) -> None:
+    """Create/touch a UUID-named temporary workspace activity marker."""
+    root = Path(sessions_root).expanduser().resolve()
+    session = Path(session_dir).expanduser().resolve()
+    if session.parent != root or not re.fullmatch(r"[0-9a-f]{32}", session.name):
+        raise ValueError("Session workspace must be a direct UUID-named child of the sessions root.")
+    root.mkdir(parents=True, exist_ok=True)
+    session.mkdir(parents=True, exist_ok=True)
+    marker = session / ".last_seen"
+    marker.touch()
+
+
+def cleanup_stale_session_workspaces(
+    sessions_root: str | Path,
+    current_session_dir: str | Path,
+    *,
+    ttl_hours: float = 24.0,
+    now: float | None = None,
+) -> int:
+    """Delete only expired UUID workspaces created by this app.
+
+    The current session is always preserved. Non-UUID entries, files, and
+    symlinks are ignored to avoid traversing or deleting unrelated paths.
+    """
+    root = Path(sessions_root).expanduser().resolve()
+    current = Path(current_session_dir).expanduser().resolve()
+    if current.parent != root or not re.fullmatch(r"[0-9a-f]{32}", current.name):
+        raise ValueError("Current session workspace is outside the allowed sessions root.")
+    if ttl_hours <= 0:
+        raise ValueError("ttl_hours must be positive.")
+    if not root.is_dir():
+        return 0
+
+    current_time = time.time() if now is None else float(now)
+    max_age_seconds = ttl_hours * 3600
+    removed = 0
+    for child in root.iterdir():
+        if child.resolve() == current or child.is_symlink() or not child.is_dir():
+            continue
+        if not re.fullmatch(r"[0-9a-f]{32}", child.name):
+            continue
+        marker = child / ".last_seen"
+        try:
+            activity_time = marker.stat().st_mtime if marker.is_file() else child.stat().st_mtime
+            if current_time - activity_time <= max_age_seconds:
+                continue
+            # Re-check direct-child containment immediately before deletion.
+            if child.resolve().parent != root:
+                continue
+            shutil.rmtree(child)
+            removed += 1
+        except (OSError, FileNotFoundError):
+            # A concurrent session may be updating or removing its directory.
+            continue
+    return removed

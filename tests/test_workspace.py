@@ -107,3 +107,49 @@ def test_parse_target_terms_only_returns_explicit_nonempty_terms():
     assert parse_target_terms("Data Analyst, Product Analyst / Risk Analyst") == [
         "Data Analyst", "Product Analyst", "Risk Analyst"
     ]
+
+
+def test_stale_workspace_cleanup_removes_only_expired_uuid_directories(tmp_path):
+    import os
+    import time
+
+    from job_scout.workspace import (
+        cleanup_stale_session_workspaces,
+        touch_session_workspace,
+    )
+
+    root = tmp_path / "jobscout-pro-sessions"
+    current = root / ("a" * 32)
+    stale = root / ("b" * 32)
+    unrelated = root / "keep-me"
+    touch_session_workspace(root, current)
+    touch_session_workspace(root, stale)
+    unrelated.mkdir(parents=True)
+
+    old_time = time.time() - 48 * 3600
+    os.utime(stale / ".last_seen", (old_time, old_time))
+
+    removed = cleanup_stale_session_workspaces(
+        root, current, ttl_hours=24, now=time.time()
+    )
+
+    assert removed == 1
+    assert current.exists()
+    assert not stale.exists()
+    assert unrelated.exists()
+
+
+def test_cleanup_preserves_current_workspace_even_if_old(tmp_path):
+    import os
+    import time
+
+    from job_scout.workspace import cleanup_stale_session_workspaces, touch_session_workspace
+
+    root = tmp_path / "sessions"
+    current = root / ("c" * 32)
+    touch_session_workspace(root, current)
+    old_time = time.time() - 72 * 3600
+    os.utime(current / ".last_seen", (old_time, old_time))
+
+    assert cleanup_stale_session_workspaces(root, current, ttl_hours=24) == 0
+    assert current.exists()

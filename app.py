@@ -27,14 +27,19 @@ from jobscout_links import (  # noqa: E402
     choose_job_links,
     load_config,
     load_jobs_from_sqlite,
+    professional_domain_mismatch,
     score_job,
 )
 from job_scout.workspace import (  # noqa: E402
     SEARCH_LOCATION_OPTIONS,
     build_workspace_config,
+    cleanup_stale_session_workspaces,
     parse_target_terms,
+    touch_session_workspace,
     write_workspace_config,
 )
+from job_scout.cv_privacy import CVProcessingError, extract_pdf_text
+from job_scout.runtime_env import build_scraper_subprocess_env
 from job_scout.job_analysis import (
     CONTRACT_TYPES,
     EXPERIENCE_BANDS,
@@ -43,7 +48,7 @@ from job_scout.job_analysis import (
     job_matches_optional_filters,
 )
 
-APP_BUILD = "2026.10.26-optional-filters-analysis-v1"
+APP_BUILD = "2026.10.26-domain-ranking-cv-privacy-v3"
 
 
 st.set_page_config(
@@ -109,21 +114,27 @@ config, config_path = load_config(template_path)
 
 # Reset state created by older app builds once, so a browser tab cannot retain
 # an old profile, CV, target title, saved list, or old search result state.
-SESSION_SCHEMA = "clean-isolated-workspaces-v2-analysis-filters"
+SESSION_SCHEMA = "clean-isolated-workspaces-v3-domain-ranking-cv-privacy"
 if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
     for stale_key in (
         "cv_text", "saved_jobs", "refresh_key", "target_title", "last_scrape",
         "cv_fingerprint", "scrape_requested", "requested_scan_mode",
         "target_title_clean", "search_locations_clean", "uploaded_cv_clean",
-        "cv_consent_clean", "min_score_clean", "search_text_clean",
+        "cv_consent_clean", "cv_uploader_version", "min_score_clean", "search_text_clean",
         "location_filter_clean", "source_filter_clean", "sort_mode_clean",
         "scan_mode_clean", "salary_filter_enabled", "salary_minimum_eur",
         "include_unknown_salary", "experience_filter_enabled", "experience_filter_level",
         "include_unknown_experience", "contract_filter_enabled", "contract_filter_type",
         "include_unknown_employment", "mode_filter_enabled", "mode_filter_value",
-        "include_unknown_work_mode", "cv_changed_notice",
+        "include_unknown_work_mode", "cv_changed_notice", "cv_cleared_notice",
+        "cv_removed_notice", "cv_truncated_notice",
     ):
         st.session_state.pop(stale_key, None)
+    for stale_upload_key in [
+        key for key in list(st.session_state.keys())
+        if str(key).startswith("uploaded_cv_clean_")
+    ]:
+        st.session_state.pop(stale_upload_key, None)
     st.session_state["_workspace_schema"] = SESSION_SCHEMA
     st.session_state["session_id"] = uuid.uuid4().hex
 
@@ -136,11 +147,15 @@ st.session_state.setdefault("target_title_clean", "")
 st.session_state.setdefault("search_locations_clean", [])
 st.session_state.setdefault("last_scrape", None)
 st.session_state.setdefault("cv_fingerprint", "")
+st.session_state.setdefault("cv_uploader_version", 0)
+st.session_state.setdefault("cv_uploader_version", 0)
 
 # Each Streamlit browser session gets its own unguessable workspace and SQLite DB.
 # The explicit db_path is strict: the reader must never fall back to another user's DB.
-session_dir = Path(tempfile.gettempdir()) / "jobscout-pro-sessions" / st.session_state["session_id"]
-session_dir.mkdir(parents=True, exist_ok=True)
+sessions_root = Path(tempfile.gettempdir()) / "jobscout-pro-sessions"
+session_dir = sessions_root / st.session_state["session_id"]
+touch_session_workspace(sessions_root, session_dir)
+cleanup_stale_session_workspaces(sessions_root, session_dir, ttl_hours=24)
 session_db_path = session_dir / "jobs.sqlite"
 target_title = str(st.session_state.get("target_title_clean", "") or "")
 search_locations = list(st.session_state.get("search_locations_clean", []) or [])
@@ -249,6 +264,39 @@ def _run_scraper_live(command, env, cwd, timeout_seconds, log_placeholder):
     return return_code, logs, timed_out, round(time.monotonic() - started)
 
 
+def _purge_uploaded_cv_widget_state() -> None:
+    """Drop all cached uploader-widget values before rotating its key."""
+    for upload_key in [
+        key for key in list(st.session_state.keys())
+        if str(key).startswith("uploaded_cv_clean_")
+    ]:
+        st.session_state.pop(upload_key, None)
+
+
+def _clear_cv_for_session() -> None:
+    """Remove extracted CV text and replace the uploader widget on the next rerun."""
+    st.session_state["cv_text"] = ""
+    st.session_state["cv_fingerprint"] = ""
+    st.session_state["cv_consent_clean"] = False
+    st.session_state["cv_uploader_version"] = int(
+        st.session_state.get("cv_uploader_version", 0)
+    ) + 1
+    _purge_uploaded_cv_widget_state()
+    st.session_state["cv_cleared_notice"] = True
+
+
+def _handle_cv_consent_change() -> None:
+    """Immediately purge the CV and uploader bytes when consent is withdrawn."""
+    if not bool(st.session_state.get("cv_consent_clean", False)):
+        st.session_state["cv_text"] = ""
+        st.session_state["cv_fingerprint"] = ""
+        st.session_state["cv_uploader_version"] = int(
+            st.session_state.get("cv_uploader_version", 0)
+        ) + 1
+        _purge_uploaded_cv_widget_state()
+        st.session_state["cv_removed_notice"] = True
+
+
 with st.sidebar:
     st.markdown("## Tu espacio")
     st.caption("Ajusta la búsqueda a lo que de verdad te interesa.")
@@ -257,7 +305,8 @@ with st.sidebar:
         "Puestos objetivo",
         key="target_title_clean",
         placeholder="Ej. Data Analyst, Product Analyst",
-        help="Escribe solo los puestos que quieres buscar, separados por comas. No hay títulos precargados.",
+        max_chars=250,
+        help="Escribe los puestos que quieres buscar, separados por comas. Máximo 250 caracteres; puedes incluir varios títulos.",
     )
     search_locations = st.multiselect(
         "Ubicaciones para buscar",
@@ -266,35 +315,73 @@ with st.sidebar:
         help="Elige una o varias ubicaciones. No se selecciona ninguna por defecto.",
     )
 
-    uploaded_cv = st.file_uploader(
-        "CV en PDF (opcional)", type=["pdf"], key="uploaded_cv_clean"
+    st.markdown("### Currículum (opcional)")
+    st.caption(
+        "El CV solo se utiliza para contrastar el perfil con las ofertas de esta sesión; "
+        "no es necesario para buscar puestos."
+    )
+    st.info(
+        "Privacidad del CV: si das tu consentimiento, el PDF se analiza en la memoria del servidor "
+        "de esta app. El código del dashboard no lo envía a portales de empleo ni a modelos de IA, "
+        "y no lo guarda en SQLite ni en el YAML de búsqueda. Puedes retirar el consentimiento en "
+        "cualquier momento o pulsar «Borrar CV y archivo». No subas información de terceros ni "
+        "documentos que no quieras procesar en este servidor."
     )
     consent = st.checkbox(
-        "Acepto procesar el CV en esta sesión.", key="cv_consent_clean"
+        "Consiento que se procese el CV en esta sesión.",
+        key="cv_consent_clean",
+        on_change=_handle_cv_consent_change,
+        help="Marca esta casilla antes de seleccionar el archivo. Al desmarcarla, se elimina el texto extraído y se reinicia el selector.",
     )
+    st.button(
+        "Borrar CV y archivo",
+        key="clear_cv_session_button",
+        on_click=_clear_cv_for_session,
+        use_container_width=True,
+        help="Borra el texto usado para el ranking y reinicia el selector de archivos.",
+    )
+    uploader_key = f"uploaded_cv_clean_{int(st.session_state.cv_uploader_version)}"
+    uploaded_cv = st.file_uploader(
+        "Seleccionar CV en PDF",
+        type=["pdf"],
+        key=uploader_key,
+        disabled=not consent,
+        help="Activa primero el consentimiento. Máximo 5 MB y 15 páginas; el PDF se analiza en memoria y no se guarda en disco.",
+    )
+    if not consent:
+        st.caption("El selector se activa después de marcar el consentimiento.")
+    if not uploaded_cv and st.session_state.cv_fingerprint:
+        # The user removed the file through the uploader's own clear control.
+        # Purge the extracted text; no CV remains in scoring.
+        st.session_state.cv_text = ""
+        st.session_state.cv_fingerprint = ""
+        st.session_state["cv_removed_notice"] = True
+
     if uploaded_cv and consent:
         file_bytes = uploaded_cv.getvalue()
         fingerprint = hashlib.sha256(file_bytes).hexdigest()
         if fingerprint != st.session_state.cv_fingerprint:
+            # Do not keep an older CV active if replacing it with an invalid PDF.
+            st.session_state.cv_text = ""
+            st.session_state.cv_fingerprint = ""
             try:
-                from pypdf import PdfReader
-
-                from io import BytesIO
-                reader = PdfReader(BytesIO(file_bytes))
-                extracted = "\n".join((page.extract_text() or "") for page in reader.pages)
-                if extracted.strip():
-                    st.session_state.cv_text = extracted
-                    st.session_state.cv_fingerprint = fingerprint
-                    st.session_state["cv_changed_notice"] = True
-                    st.rerun()
-                else:
-                    st.warning("No se ha podido extraer texto del PDF; puede ser un escaneo.")
-            except Exception as exc:
-                st.warning(f"No se ha podido leer el CV: {exc}")
-    elif uploaded_cv and not consent:
-        st.caption("Marca la casilla para usar el contenido del CV en el ranking.")
+                extraction = extract_pdf_text(file_bytes)
+            except CVProcessingError as exc:
+                st.warning(str(exc))
+            else:
+                st.session_state.cv_text = extraction.text
+                st.session_state.cv_fingerprint = fingerprint
+                st.session_state["cv_changed_notice"] = True
+                st.session_state["cv_truncated_notice"] = extraction.truncated
+                st.rerun()
     if st.session_state.pop("cv_changed_notice", False):
         st.success("CV procesado en esta sesión; el análisis de encaje se ha actualizado.")
+    if st.session_state.pop("cv_truncated_notice", False):
+        st.warning("Se ha limitado el texto extraído a 100.000 caracteres para proteger los recursos del servidor.")
+    if st.session_state.pop("cv_cleared_notice", False):
+        st.info("CV y texto extraído eliminados de esta sesión.")
+    if st.session_state.pop("cv_removed_notice", False):
+        st.info("Se ha retirado el consentimiento o el archivo; el texto del CV se ha eliminado de esta sesión.")
 
     st.divider()
     st.markdown("### Filtros")
@@ -458,14 +545,10 @@ if st.session_state.pop("scrape_requested", False):
             is_quick = scan_mode.startswith("⚡")
             if is_quick:
                 command.append("--quick")
-            child_env = os.environ.copy()
-            child_env["PYTHONUNBUFFERED"] = "1"
-            # Only the user's selected query is passed. The CV stays in Streamlit
-            # session memory and is never sent to the scraper subprocess.
-            child_env["JOBSCOUT_TARGET_TITLE"] = target_title
-            child_env.pop("JOBSCOUT_DB_PATH", None)
-            existing_pythonpath = child_env.get("PYTHONPATH", "")
-            child_env["PYTHONPATH"] = str(SRC_DIR) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+            # Pass only runtime essentials and the selected query. Never forward
+            # API keys, Telegram/email credentials, or arbitrary user/host secrets.
+            # The CV remains in Streamlit session memory and is not sent to the scraper.
+            child_env = build_scraper_subprocess_env(os.environ, target_title, SRC_DIR)
             timeout_seconds = 180 if is_quick else 900
             mode_label = "búsqueda rápida" if is_quick else "búsqueda completa"
             with st.status(f"Ejecutando {mode_label}…", expanded=True) as status:
@@ -520,6 +603,9 @@ scoring_config = build_workspace_config(
 )
 for job in jobs:
     job["calculated_score"] = score_job(job, scoring_config, st.session_state.cv_text)
+    job["domain_mismatch"] = professional_domain_mismatch(
+        job, scoring_config, st.session_state.cv_text
+    )
 
 columns = [
     "title", "company", "location", "description", "job_url", "job_url_direct",
@@ -611,7 +697,7 @@ with tab_discover:
             date_value = str(row.get("date_posted") or "").strip()
             salary = str(row.get("salary") or "").strip()
             identity = str(row.get("_identity") or f"{title}|{company}|{location}")
-            score_label = "Encaje alto" if score >= 70 else ("Encaje medio" if score >= 45 else "Por revisar")
+            score_label = "Relevancia alta" if score >= 70 else ("Relevancia media" if score >= 45 else "Por revisar")
 
             with st.container(border=True):
                 title_col, score_col = st.columns([5, 1])
@@ -627,13 +713,20 @@ with tab_discover:
                         ])
                     )
                 with score_col:
-                    st.metric("Encaje", f"{score}/100")
+                    st.metric("Relevancia", f"{score}/100")
                     st.caption(score_label)
 
                 if description:
                     st.write(description[:650] + ("…" if len(description) > 650 else ""))
                 else:
                     st.caption("Descripción no disponible en los datos recogidos; valora el título y abre el anuncio para comprobar los requisitos.")
+
+                mismatch = row.get("domain_mismatch")
+                if isinstance(mismatch, dict) and mismatch.get("reason"):
+                    st.warning(
+                        "Posible incompatibilidad profesional: " + mismatch["reason"]
+                        + " La puntuación se ha limitado para evitar que coincidencias genéricas la coloquen arriba."
+                    )
 
                 link_col, apply_col, save_col = st.columns([1.35, 1.35, 1])
                 with link_col:
@@ -781,6 +874,8 @@ with tab_method:
         **Qué hace el índice de encaje**
         
         Combina el título objetivo, las palabras clave que figuran en la configuración y, cuando das tu consentimiento, el solapamiento textual con el CV. Es una regla explicable para ordenar la lista: **no es una probabilidad de entrevista ni una evaluación automática de tus capacidades**.
+
+        Si has cargado un CV, también se comprueba si el perfil y la vacante parecen pertenecer a ámbitos profesionales claramente distintos. Cuando hay señales fuertes de incompatibilidad (por ejemplo, geociencias frente a oncología), el índice se limita y la tarjeta muestra el motivo. Esta comprobación usa reglas conservadoras y puede equivocarse; un cambio de carrera intencional se puede indicar escribiendo el puesto objetivo correspondiente.
 
         **Análisis de condiciones**
         

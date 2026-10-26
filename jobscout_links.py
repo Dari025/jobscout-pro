@@ -357,6 +357,218 @@ def _contains_term(haystack: str, term: Any) -> bool:
     return re.search(pattern, haystack) is not None
 
 
+# Domain signals are deliberately narrow: generic terms such as "scientist",
+# "research", "analysis", "data" and "remote" must not identify a profession.
+_DOMAIN_LABELS = {
+    "geosciences": "Geociencias",
+    "health_biomedical": "Salud / biomedicina",
+    "life_sciences": "Ciencias de la vida",
+    "economics_analytics": "Economía / analítica",
+    "software_it": "Software / tecnología",
+    "environmental_science": "Medioambiente",
+    "finance_accounting": "Finanzas / contabilidad",
+    "law": "Derecho",
+    "marketing_sales": "Marketing / ventas",
+    "education": "Educación / academia",
+}
+
+_DOMAIN_SIGNALS = {
+    "geosciences": (
+        ("instituto geologico y minero", 5.0), ("geological survey", 4.0),
+        ("igme", 5.0), ("geoscientist", 4.0), ("geologist", 3.5),
+        ("geology", 3.0), ("geological", 2.0), ("geochemistry", 3.0),
+        ("geochemist", 3.0), ("hydrogeology", 3.0), ("geophysics", 3.0),
+        ("geophysicist", 3.0), ("mineral exploration", 2.5),
+        ("mineral resources", 2.5), ("earth sciences", 2.0),
+        ("earth science", 2.0), ("mining geology", 3.0),
+        ("geological mapping", 2.5), ("geotecnia", 2.0),
+        ("hidrogeologia", 3.0), ("geoquimica", 3.0), ("geologia", 3.0),
+    ),
+    "health_biomedical": (
+        ("oncology", 4.0), ("oncologist", 4.0), ("oncologia", 4.0),
+        ("cancer research", 4.0), ("clinical oncology", 4.0),
+        ("clinical trial", 3.0), ("clinical research", 2.5),
+        ("patient care", 2.0), ("hospital", 2.0), ("medical doctor", 3.0),
+        ("biomedical", 2.5), ("pharmacology", 3.0),
+        ("pharmaceutical", 2.0), ("nursing", 2.0), ("pathology", 2.0),
+        ("radiology", 2.0), ("ensayos clinicos", 3.0),
+        ("investigacion clinica", 2.5), ("atencion al paciente", 2.0),
+    ),
+    "life_sciences": (
+        ("molecular biology", 3.0), ("cell biology", 3.0),
+        ("biotechnology", 3.0), ("biochemistry", 3.0),
+        ("microbiology", 3.0), ("genomics", 3.0), ("proteomics", 3.0),
+        ("genetics", 2.5), ("biologist", 2.5), ("life sciences", 2.5),
+        ("biologia molecular", 3.0), ("biotecnologia", 3.0),
+        ("bioquimica", 3.0), ("microbiologia", 3.0),
+    ),
+    "economics_analytics": (
+        ("economist", 3.0), ("economics", 3.0), ("econometrics", 3.0),
+        ("econometric", 3.0), ("data analyst", 3.0), ("business analyst", 3.0),
+        ("product analyst", 3.0), ("business intelligence", 3.0),
+        ("data science", 3.0), ("data scientist", 3.0),
+        ("decision science", 3.0), ("risk analyst", 3.0),
+        ("quantitative analyst", 3.0), ("operations research", 3.0),
+        ("economic research", 3.0), ("financial analyst", 2.5),
+        ("economia", 3.0), ("econometria", 3.0), ("analitica de datos", 3.0),
+    ),
+    "software_it": (
+        ("software engineer", 3.0), ("software developer", 3.0),
+        ("frontend developer", 3.0), ("backend developer", 3.0),
+        ("full stack", 3.0), ("devops", 3.0), ("cybersecurity", 3.0),
+        ("cloud engineer", 3.0), ("site reliability", 3.0),
+        ("computer science", 2.5), ("programmer", 2.5),
+        ("ingeniero de software", 3.0), ("desarrollador de software", 3.0),
+    ),
+    "environmental_science": (
+        ("environmental scientist", 3.0), ("environmental science", 3.0),
+        ("environmental impact", 2.5), ("environmental consultant", 3.0),
+        ("ecologist", 3.0), ("ecology", 2.5), ("biodiversity", 2.5),
+        ("conservation biology", 3.0), ("climate science", 2.5),
+        ("environmental assessment", 2.5), ("medio ambiente", 2.5),
+        ("impacto ambiental", 2.5), ("ecologia", 2.5), ("biodiversidad", 2.5),
+    ),
+    "finance_accounting": (
+        ("investment banking", 3.0), ("investment analyst", 3.0),
+        ("equity research", 3.0), ("portfolio manager", 3.0),
+        ("accountant", 2.5), ("accounting", 2.5), ("controller", 2.5),
+        ("actuary", 3.0), ("treasury analyst", 3.0),
+        ("contable", 2.5), ("contabilidad", 2.5),
+    ),
+    "law": (
+        ("legal counsel", 3.0), ("lawyer", 3.0), ("attorney", 3.0),
+        ("solicitor", 3.0), ("barrister", 3.0), ("paralegal", 2.5),
+        ("abogado", 3.0), ("asesor juridico", 3.0),
+    ),
+    "marketing_sales": (
+        ("marketing manager", 3.0), ("growth marketing", 3.0),
+        ("brand marketing", 3.0), ("sales representative", 3.0),
+        ("account executive", 3.0), ("business development", 2.5),
+        ("talent acquisition", 2.5), ("seo specialist", 2.5),
+        ("director comercial", 3.0), ("marketing digital", 3.0),
+    ),
+    "education": (
+        ("school teacher", 3.0), ("university lecturer", 3.0),
+        ("professor of", 2.5), ("teacher", 2.0), ("lecturer", 2.5),
+        ("academic faculty", 2.5), ("profesor", 2.0), ("docente", 2.0),
+    ),
+}
+
+
+def _domain_scores(value: Any) -> dict[str, float]:
+    """Score distinctive professional-domain signals in text, not generic vocabulary."""
+    text = _normalise_words(value)
+    return {
+        family: sum(weight for term, weight in signals if _contains_term(text, term))
+        for family, signals in _DOMAIN_SIGNALS.items()
+    }
+
+
+def _select_primary_domain(scores: dict[str, float], minimum: float = 2.0) -> str | None:
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    if not ranked or ranked[0][1] < minimum:
+        return None
+    # If two domains are similarly represented (e.g. environmental geoscience),
+    # stay conservative rather than applying a potentially incorrect penalty.
+    if len(ranked) > 1 and ranked[1][1] >= ranked[0][1] * 0.82:
+        return None
+    return ranked[0][0]
+
+
+def _primary_cv_domain(cv_text: str) -> str | None:
+    return _select_primary_domain(_domain_scores(cv_text), minimum=2.0)
+
+
+def _primary_job_domain(title: str, description: str) -> str | None:
+    title_scores = _domain_scores(title)
+    description_scores = _domain_scores(description)
+    combined = {
+        family: title_scores.get(family, 0.0) * 3.0 + description_scores.get(family, 0.0)
+        for family in _DOMAIN_SIGNALS
+    }
+    return _select_primary_domain(combined, minimum=4.0)
+
+
+def _explicit_target_domains(config: dict[str, Any]) -> set[str]:
+    """Return every distinct domain explicitly requested by the user.
+
+    A user may intentionally target several fields during a career transition;
+    do not collapse those preferences to a single dominant domain.
+    """
+    profile = config.get("profile", {}) if isinstance(config.get("profile", {}), dict) else {}
+    search = config.get("search", {}) if isinstance(config.get("search", {}), dict) else {}
+    phrases: list[str] = []
+    target = _text(profile.get("target_title"))
+    if target:
+        # The app accepts multiple titles separated by commas, slashes, or semicolons.
+        phrases.extend(
+            part.strip() for part in re.split(r"[/,;|\\n]+", target) if part.strip()
+        )
+    terms = search.get("terms", [])
+    if isinstance(terms, list):
+        phrases.extend(_text(item) for item in terms if _text(item))
+    signals = profile.get("title_signals", [])
+    if isinstance(signals, list):
+        phrases.extend(
+            _text(item.get("pattern")) for item in signals
+            if isinstance(item, dict) and _text(item.get("pattern"))
+        )
+    domains: set[str] = set()
+    for phrase in phrases:
+        domain = _select_primary_domain(_domain_scores(phrase), minimum=2.0)
+        if domain:
+            domains.add(domain)
+    return domains
+
+
+def professional_domain_mismatch(
+    row: dict[str, Any],
+    config: dict[str, Any] | None = None,
+    cv_text: str = "",
+) -> dict[str, str] | None:
+    """Return a warning when a CV and vacancy clearly belong to different domains.
+
+    An explicit target in that vacancy's domain overrides the warning, so a
+    deliberate career change is not automatically penalized.
+    """
+    config = config or {}
+    profile = config.get("profile", {}) if isinstance(config.get("profile", {}), dict) else {}
+    cv = cv_text or _text(profile.get("resume_text", ""))
+    if not cv.strip():
+        return None
+
+    job = canonicalize_row(row)
+    cv_domain = _primary_cv_domain(cv)
+    job_domain = _primary_job_domain(
+        _text(job.get("title")), _text(job.get("description"))
+    )
+    if not cv_domain or not job_domain or cv_domain == job_domain:
+        return None
+
+    if job_domain in _explicit_target_domains(config):
+        return None
+
+    return {
+        "cv_domain": _DOMAIN_LABELS.get(cv_domain, cv_domain),
+        "job_domain": _DOMAIN_LABELS.get(job_domain, job_domain),
+        "reason": (
+            f"El CV presenta señales de { _DOMAIN_LABELS.get(cv_domain, cv_domain) }, "
+            f"pero la oferta parece centrarse en { _DOMAIN_LABELS.get(job_domain, job_domain) }."
+        ),
+    }
+
+
+def _title_phrase_matches(title: str, phrase: str) -> bool:
+    """Match whole phrases/words, allowing the compound 'geoscientist' for 'scientist'."""
+    if _contains_term(title, phrase):
+        return True
+    # "Scientist" is commonly compounded in legitimate job titles (e.g. geoscientist).
+    if phrase in {"scientist", "scientists"}:
+        return re.search(r"(?<!\w)[a-z-]*scientists?(?!\w)", title) is not None
+    return False
+
+
+
 def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
               cv_text: str = "") -> int:
     """Return a transparent 0–100 relevance index (not a hiring probability).
@@ -393,7 +605,7 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
             phrase = _normalise_words(target_phrase)
             if not phrase:
                 continue
-            if phrase in title:
+            if _contains_term(title, phrase) or _title_phrase_matches(title, phrase):
                 exact_scores.append(1.0)
                 continue
             tokens = [token for token in phrase.split() if len(token) > 2]
@@ -441,4 +653,18 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
         return 0
     weighted_sum = sum(value * weight for value, weight in components)
     denominator = sum(weight for _, weight in components)
-    return max(0, min(100, round(100 * weighted_sum / denominator)))
+    score = max(0, min(100, round(100 * weighted_sum / denominator)))
+    mismatch = professional_domain_mismatch(job, config, cv_text)
+    if mismatch:
+        # A clear cross-domain mismatch should not outrank suitable roles just because
+        # the vacancy repeats generic words like "scientist" or "research".
+        score = min(score, 24)
+    else:
+        # Reward a distinctive domain match when the user's target title is broad
+        # (for example, "Scientist"), so a geoscience CV prefers geoscience over a
+        # generic research job that happens to repeat the same broad title.
+        cv_domain = _primary_cv_domain(cv_text or _text(profile.get("resume_text", "")))
+        job_domain = _primary_job_domain(title, description)
+        if cv_domain and job_domain == cv_domain:
+            score = min(100, score + 8)
+    return score

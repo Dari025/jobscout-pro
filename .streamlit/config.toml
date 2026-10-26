@@ -1,0 +1,3 @@
+[server]
+# CV uploads are optional and are capped at 5 MB before reaching app code.
+maxUploadSize = 5

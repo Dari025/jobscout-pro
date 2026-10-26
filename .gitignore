@@ -236,3 +236,20 @@ busqueda.yaml
 busqueda.local.yaml
 .env.*
 !.env.example
+
+
+# JobScout generated/private user data
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.pdf
+*.csv
+*.jsonl
+exports/
+reports/
+data/
+
+# Keep only non-sensitive Streamlit settings in version control
+.streamlit/secrets.toml
+.streamlit/secrets/
