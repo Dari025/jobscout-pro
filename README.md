@@ -17,6 +17,12 @@ La aplicación web pública arranca con puestos y ubicaciones vacíos: cada visi
 
 El CV, si se carga con consentimiento, se mantiene en memoria de la sesión para calcular relevancia y no se escribe en el archivo de configuración del rastreador. Las ofertas guardadas, las búsquedas y la lista de guardadas pertenecen únicamente a esa sesión. El espacio está pensado para la aplicación web compartida; no sustituye a un sistema de autenticación o gestión de cuentas.
 
+## Filtros opcionales y lectura de requisitos
+
+Los filtros avanzados están desactivados por defecto. El usuario puede activar, de forma independiente, un salario mínimo bruto anual en EUR, nivel de experiencia, tipo de contrato y modalidad de trabajo. Por defecto, los anuncios sin información suficiente se mantienen; cada filtro permite excluir los datos desconocidos de forma expresa.
+
+Las tarjetas incluyen una lectura automática y explicable de las condiciones: salario publicado y periodo, años de experiencia detectados, nivel aproximado, tipo de contrato, modalidad y herramientas mencionadas. Si se carga un CV con consentimiento, se comparan los requisitos detectados con el texto disponible en la sesión. Esta extracción no es un LLM ni una predicción de contratación; muestra evidencia encontrada, no inventa datos que falten y puede pasar por alto formulaciones poco habituales. Los importes en monedas distintas del EUR no se convierten para el filtro salarial.
+
 ## Modos de búsqueda
 
 - **Rápida** (predeterminada en el dashboard): consulta una selección de fuentes y términos, limita la paginación, reduce los reintentos y no descarga cada descripción de LinkedIn por separado. Está pensada para obtener una primera lista con menos peticiones.

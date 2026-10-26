@@ -200,6 +200,26 @@ def canonicalize_row(row: dict[str, Any]) -> dict[str, Any]:
         if "remote" not in _text(result["location"]).lower():
             result["location"] = _text(result["location"]) + " (Remote)"
 
+    # Preserve source metadata used by the explainable job analysis. Older
+    # dashboard normalization used to discard salary amounts, currencies,
+    # intervals and employment-type fields stored in the upstream SQLite schema.
+    metadata_aliases = {
+        "comp_min": ("compmin", "minamount", "salarymin", "minimumsalary"),
+        "comp_max": ("compmax", "maxamount", "salarymax", "maximumsalary"),
+        "comp_currency": ("compcurrency", "salarycurrency", "currency"),
+        "comp_interval": ("compinterval", "salaryinterval", "payinterval", "interval"),
+        "job_type": ("jobtype", "jobtypes", "employmenttype", "employmenttypes"),
+        "is_remote": ("isremote", "remote", "workremote"),
+        "country": ("country", "countrycode"),
+        "city": ("city",),
+        "state": ("state", "region", "province"),
+    }
+    for target, aliases in metadata_aliases.items():
+        for alias in aliases:
+            if alias in norm and _text(norm[alias]):
+                result[target] = norm[alias]
+                break
+
     source_url, apply_url = choose_job_links(row)
     result["job_url"] = source_url
     result["job_url_direct"] = apply_url

@@ -35,8 +35,15 @@ from job_scout.workspace import (  # noqa: E402
     parse_target_terms,
     write_workspace_config,
 )
+from job_scout.job_analysis import (
+    CONTRACT_TYPES,
+    EXPERIENCE_BANDS,
+    WORK_MODES,
+    analyze_job,
+    job_matches_optional_filters,
+)
 
-APP_BUILD = "2026.10.26-session-isolation-v1"
+APP_BUILD = "2026.10.26-optional-filters-analysis-v1"
 
 
 st.set_page_config(
@@ -88,7 +95,7 @@ st.markdown(
     <div class="hero">
       <div class="eyebrow">✦ Buscador personalizable de empleo</div>
       <div class="hero-title">Encuentra oportunidades que encajan contigo.</div>
-      <div class="hero-copy">Empieza desde cero: introduce los puestos y las ubicaciones que te interesan. Tus búsquedas, ofertas y documentos se mantienen separados de los de otras sesiones.</div>
+      <div class="hero-copy">Empieza desde cero: introduce tus puestos, ubicaciones y, si te interesa, filtros salariales o de experiencia. El análisis de cada oferta explica qué condiciones aparecen en el anuncio y qué datos faltan.</div>
       <div class="hero-chip">OFERTAS REALES · ENLACES ESPECÍFICOS · ESPACIO AISLADO POR SESIÓN</div>
     </div>
     """,
@@ -102,7 +109,7 @@ config, config_path = load_config(template_path)
 
 # Reset state created by older app builds once, so a browser tab cannot retain
 # an old profile, CV, target title, saved list, or old search result state.
-SESSION_SCHEMA = "clean-isolated-workspaces-v1"
+SESSION_SCHEMA = "clean-isolated-workspaces-v2-analysis-filters"
 if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
     for stale_key in (
         "cv_text", "saved_jobs", "refresh_key", "target_title", "last_scrape",
@@ -110,7 +117,11 @@ if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
         "target_title_clean", "search_locations_clean", "uploaded_cv_clean",
         "cv_consent_clean", "min_score_clean", "search_text_clean",
         "location_filter_clean", "source_filter_clean", "sort_mode_clean",
-        "scan_mode_clean",
+        "scan_mode_clean", "salary_filter_enabled", "salary_minimum_eur",
+        "include_unknown_salary", "experience_filter_enabled", "experience_filter_level",
+        "include_unknown_experience", "contract_filter_enabled", "contract_filter_type",
+        "include_unknown_employment", "mode_filter_enabled", "mode_filter_value",
+        "include_unknown_work_mode", "cv_changed_notice",
     ):
         st.session_state.pop(stale_key, None)
     st.session_state["_workspace_schema"] = SESSION_SCHEMA
@@ -157,6 +168,22 @@ for raw in raw_jobs:
     seen.add(identity)
     job["_identity"] = identity
     jobs.append(job)
+
+# Derive salary, seniority, contract, work mode and explicitly mentioned requirements.
+# These fields are evidence-based; missing information remains "No indicado".
+target_terms = parse_target_terms(target_title)
+for job in jobs:
+    analysis = analyze_job(job, st.session_state.cv_text, target_terms)
+    job["salary"] = analysis.get("salary_display") or str(job.get("salary") or "")
+    for field in (
+        "salary_eur_year_min", "salary_currency", "salary_interval", "salary_known",
+        "salary_evidence", "experience_level", "experience_min_years",
+        "experience_max_years", "experience_evidence", "experience_level_evidence",
+        "employment_type_label", "employment_type_evidence", "work_mode_label",
+        "work_mode_evidence", "requirements", "cv_matches", "cv_unconfirmed",
+        "target_title_matches", "analysis_method", "analysis_notes",
+    ):
+        job[field] = analysis.get(field)
 
 available_sources = sorted({str(job.get("source") or "Fuente desconocida").strip() for job in jobs if str(job.get("source") or "").strip()})
 
@@ -258,13 +285,16 @@ with st.sidebar:
                 if extracted.strip():
                     st.session_state.cv_text = extracted
                     st.session_state.cv_fingerprint = fingerprint
-                    st.success("CV procesado en esta sesión.")
+                    st.session_state["cv_changed_notice"] = True
+                    st.rerun()
                 else:
                     st.warning("No se ha podido extraer texto del PDF; puede ser un escaneo.")
             except Exception as exc:
                 st.warning(f"No se ha podido leer el CV: {exc}")
     elif uploaded_cv and not consent:
         st.caption("Marca la casilla para usar el contenido del CV en el ranking.")
+    if st.session_state.pop("cv_changed_notice", False):
+        st.success("CV procesado en esta sesión; el análisis de encaje se ha actualizado.")
 
     st.divider()
     st.markdown("### Filtros")
@@ -300,6 +330,82 @@ with st.sidebar:
     st.caption(
         "Rápida: menos peticiones y resultados iniciales. Completa: más cobertura, aunque las fuentes pueden bloquear o ralentizar consultas."
     )
+
+    with st.expander("Filtros avanzados (todos opcionales)", expanded=False):
+        st.caption(
+            "Por defecto no se aplica ningún filtro avanzado. Los anuncios sin datos suficientes se conservan; "
+            "puedes excluirlos explícitamente en cada filtro."
+        )
+        salary_filter_enabled = st.checkbox(
+            "Aplicar salario mínimo anual bruto (EUR)",
+            value=False, key="salary_filter_enabled",
+        )
+        salary_minimum_eur = None
+        include_unknown_salary = True
+        if salary_filter_enabled:
+            salary_minimum_eur = st.number_input(
+                "Mínimo anual en euros", min_value=0, max_value=300000,
+                value=25000, step=1000, key="salary_minimum_eur",
+            )
+            include_unknown_salary = st.checkbox(
+                "Incluir ofertas sin salario EUR comparable",
+                value=True, key="include_unknown_salary",
+                help="Solo se pueden comparar importes explícitos en euros con periodo identificable.",
+            )
+
+        experience_filter_enabled = st.checkbox(
+            "Filtrar por experiencia", value=False, key="experience_filter_enabled"
+        )
+        experience_filter_level = None
+        include_unknown_experience = True
+        if experience_filter_enabled:
+            experience_filter_level = st.selectbox(
+                "Nivel de experiencia", EXPERIENCE_BANDS, key="experience_filter_level"
+            )
+            include_unknown_experience = st.checkbox(
+                "Incluir ofertas sin nivel indicado", value=True,
+                key="include_unknown_experience",
+            )
+
+        contract_filter_enabled = st.checkbox(
+            "Filtrar por tipo de contrato", value=False, key="contract_filter_enabled"
+        )
+        contract_filter_type = None
+        include_unknown_employment = True
+        if contract_filter_enabled:
+            contract_filter_type = st.selectbox(
+                "Tipo de contrato", CONTRACT_TYPES, key="contract_filter_type"
+            )
+            include_unknown_employment = st.checkbox(
+                "Incluir ofertas sin tipo de contrato indicado", value=True,
+                key="include_unknown_employment",
+            )
+
+        mode_filter_enabled = st.checkbox(
+            "Filtrar por modalidad de trabajo", value=False, key="mode_filter_enabled"
+        )
+        mode_filter_value = None
+        include_unknown_work_mode = True
+        if mode_filter_enabled:
+            mode_filter_value = st.selectbox(
+                "Modalidad", WORK_MODES, key="mode_filter_value"
+            )
+            include_unknown_work_mode = st.checkbox(
+                "Incluir ofertas sin modalidad indicada", value=True,
+                key="include_unknown_work_mode",
+            )
+
+    optional_filter_options = {
+        "min_salary_eur_year": salary_minimum_eur if salary_filter_enabled else None,
+        "include_unknown_salary": include_unknown_salary,
+        "experience_level": experience_filter_level if experience_filter_enabled else None,
+        "include_unknown_experience": include_unknown_experience,
+        "employment_type": contract_filter_type if contract_filter_enabled else None,
+        "include_unknown_employment": include_unknown_employment,
+        "work_mode": mode_filter_value if mode_filter_enabled else None,
+        "include_unknown_work_mode": include_unknown_work_mode,
+    }
+
     if st.button("✦ Buscar oportunidades", type="primary", use_container_width=True):
         if not parse_target_terms(target_title):
             st.warning("Escribe al menos un puesto objetivo antes de buscar.")
@@ -418,7 +524,10 @@ for job in jobs:
 columns = [
     "title", "company", "location", "description", "job_url", "job_url_direct",
     "source", "date_posted", "salary", "id", "calculated_score", "has_specific_link",
-    "_identity",
+    "salary_eur_year_min", "salary_currency", "salary_interval", "salary_known",
+    "experience_level", "experience_min_years", "experience_max_years",
+    "employment_type_label", "work_mode_label", "requirements", "cv_matches",
+    "cv_unconfirmed", "analysis_notes", "_identity",
 ]
 df_all = pd.DataFrame(jobs) if jobs else pd.DataFrame(columns=columns)
 df = df_all.copy()
@@ -441,6 +550,12 @@ if not df.empty:
         )]
     if source_filter:
         df = df[df["source"].fillna("").astype(str).isin(source_filter)]
+    if optional_filter_options and not df.empty:
+        mask = df.apply(
+            lambda row: job_matches_optional_filters(row.to_dict(), optional_filter_options),
+            axis=1,
+        )
+        df = df[mask]
     if sort_mode == "Más recientes" and "date_posted" in df.columns:
         df = df.assign(_posted=pd.to_datetime(df["date_posted"], errors="coerce", utc=True))
         df = df.sort_values(["_posted", "calculated_score"], ascending=[False, False], kind="stable")
@@ -504,6 +619,13 @@ with tab_discover:
                     st.subheader(title)
                     st.markdown(f"**{company}**")
                     st.caption(" · ".join(part for part in [location, source_name, date_value, salary] if part))
+                    st.caption(
+                        " · ".join([
+                            f"Experiencia: {row.get('experience_level') or 'No indicado'}",
+                            f"Contrato: {row.get('employment_type_label') or 'No indicado'}",
+                            f"Modalidad: {row.get('work_mode_label') or 'No indicado'}",
+                        ])
+                    )
                 with score_col:
                     st.metric("Encaje", f"{score}/100")
                     st.caption(score_label)
@@ -544,14 +666,67 @@ with tab_discover:
                         st.toast("Vacante guardada en esta sesión.")
                         st.rerun()
 
-                with st.expander("Detalles y verificación"):
-                    st.write(f"Fuente: {source_name}")
-                    st.write(f"Publicación: {date_value or 'No indicada'}")
+                with st.expander("Análisis automático de requisitos y condiciones"):
+                    st.caption(
+                        "Lectura explicable del texto y de los metadatos del anuncio; no es una predicción de contratación. "
+                        "Cuando un dato no aparece, se marca como no indicado en lugar de inventarlo."
+                    )
+                    salary_evidence = str(row.get("salary_evidence") or "sin información salarial verificable")
+                    salary_value = str(row.get("salary") or "No indicado")
+                    st.markdown(f"**Salario publicado:** {salary_value}")
+                    st.caption(f"Base: {salary_evidence}. El filtro salarial compara solo cantidades expresables en EUR/año.")
+                    experience_level = str(row.get("experience_level") or "No indicado")
+                    experience_evidence = str(row.get("experience_evidence") or "No se ha encontrado un requisito de años verificable.")
+                    years_min = row.get("experience_min_years")
+                    years_max = row.get("experience_max_years")
+                    if pd.notna(years_min) and years_min is not None:
+                        if pd.notna(years_max) and years_max is not None:
+                            years_text = f"{int(years_min)}–{int(years_max)} años"
+                        else:
+                            years_text = f"{int(years_min)}+ años"
+                    else:
+                        years_text = "Años no especificados"
+                    st.markdown(f"**Experiencia detectada:** {experience_level} · {years_text}")
+                    st.caption(f"Evidencia: {experience_evidence}")
+                    st.markdown(
+                        f"**Tipo de contrato:** {row.get('employment_type_label') or 'No indicado'} "
+                        f"· {row.get('employment_type_evidence') or 'Sin evidencia clara'}"
+                    )
+                    st.markdown(
+                        f"**Modalidad:** {row.get('work_mode_label') or 'No indicado'} "
+                        f"· {row.get('work_mode_evidence') or 'Sin evidencia clara'}"
+                    )
+
+                    requirements = row.get("requirements")
+                    if isinstance(requirements, list) and requirements:
+                        st.markdown("**Herramientas y requisitos mencionados**")
+                        st.write(", ".join(str(item) for item in requirements))
+                    else:
+                        st.caption("No se han detectado herramientas de la lista de comprobación en el texto disponible.")
+
+                    if st.session_state.cv_text:
+                        cv_matches = row.get("cv_matches")
+                        cv_unconfirmed = row.get("cv_unconfirmed")
+                        cv_matches = cv_matches if isinstance(cv_matches, list) else []
+                        cv_unconfirmed = cv_unconfirmed if isinstance(cv_unconfirmed, list) else []
+                        st.markdown("**Contraste con el CV de esta sesión**")
+                        if cv_matches:
+                            st.success("Detectado en el texto del CV: " + ", ".join(cv_matches))
+                        else:
+                            st.caption("No se han detectado coincidencias exactas con los requisitos identificados en el texto del CV.")
+                        if cv_unconfirmed:
+                            st.caption(
+                                "No localizado en el texto del CV (no significa que no tengas esa habilidad): "
+                                + ", ".join(cv_unconfirmed)
+                            )
+                    else:
+                        st.caption("Sube un CV en la barra lateral para contrastar las herramientas detectadas; es opcional.")
+
                     if source_url:
                         st.write(f"Enlace del anuncio: {source_url}")
                     if apply_url and apply_url != source_url:
                         st.write(f"Enlace de candidatura: {apply_url}")
-                    st.caption("El enlace se valida por estructura, no por disponibilidad. Comprueba que la vacante siga activa y que los requisitos encajen contigo.")
+                    st.caption("El análisis se basa en el texto recibido por el scraper. Las descripciones incompletas pueden limitar la detección; abre el anuncio para confirmar las condiciones.")
 
     with st.expander("Preparar borrador de carta"):
         st.caption("Plantilla editable: revisa y personaliza el contenido; no se atribuyen habilidades que no hayas confirmado.")
@@ -606,6 +781,10 @@ with tab_method:
         **Qué hace el índice de encaje**
         
         Combina el título objetivo, las palabras clave que figuran en la configuración y, cuando das tu consentimiento, el solapamiento textual con el CV. Es una regla explicable para ordenar la lista: **no es una probabilidad de entrevista ni una evaluación automática de tus capacidades**.
+
+        **Análisis de condiciones**
+        
+        El análisis automático extrae salarios explícitos, periodo de pago, requisitos de experiencia, tipo de contrato, modalidad de trabajo y herramientas mencionadas. El salario mínimo compara importes en euros normalizados a una cifra anual; no realiza conversiones de otras monedas. Los filtros avanzados son opcionales y están desactivados por defecto. Cuando un anuncio no incluye información, se conserva en los resultados por defecto y se etiqueta como “No indicado”. Si subes el CV con consentimiento, se comparan las herramientas extraídas con el texto disponible; que una habilidad no aparezca en el CV no implica que no la tengas.
 
         **Qué significa un enlace válido**
         

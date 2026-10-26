@@ -193,3 +193,26 @@ def test_explicit_empty_database_never_falls_back_to_shared_jobs(tmp_path):
 
     assert jobs == []
     assert any("Sin tabla válida de ofertas" in item for item in diagnostics)
+
+
+def test_canonicalize_row_preserves_compensation_and_job_type_metadata():
+    row = {
+        "title": "Data Analyst",
+        "company": "Example",
+        "comp_min": 30000,
+        "comp_max": 40000,
+        "comp_currency": "EUR",
+        "comp_interval": "yearly",
+        "job_type": '["internship", "part_time"]',
+        "is_remote": 1,
+        "url": "https://www.linkedin.com/jobs/view/123456789/",
+    }
+
+    normalized = canonicalize_row(row)
+
+    assert normalized["comp_min"] == 30000
+    assert normalized["comp_max"] == 40000
+    assert normalized["comp_currency"] == "EUR"
+    assert normalized["comp_interval"] == "yearly"
+    assert normalized["job_type"] == '["internship", "part_time"]'
+    assert normalized["is_remote"] == 1
