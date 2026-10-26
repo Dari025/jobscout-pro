@@ -28,6 +28,23 @@ from jobscout_links import (  # noqa: E402
     score_job,
 )
 
+APP_BUILD = "2026.10.26-search-db-7bd5d8a"
+
+
+def _expected_database_path(config_data: dict[str, Any], loaded_config_path: Path | None) -> Path:
+    """Resolve the same SQLite path the CLI uses for this loaded YAML configuration."""
+    configured = str(config_data.get("db_path") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    profile_name = str(config_data.get("config_name") or "").strip()
+    if not profile_name:
+        stem = loaded_config_path.stem if loaded_config_path else "config"
+        profile_name = "default" if stem == "config" else stem
+    profile_name = re.sub(r"[^a-zA-Z0-9_-]", "-", profile_name).strip("-").lower() or "default"
+    data_dir = Path.home() / ".local" / "share" / "job-scout"
+    return data_dir / "job-scout.db" if profile_name == "default" else data_dir / f"{profile_name}.db"
+
+
 st.set_page_config(
     page_title="JobScout Pro",
     page_icon="✦",
@@ -85,6 +102,10 @@ st.markdown(
 )
 
 config, config_path = load_config()
+# The CLI and dashboard must read the exact same database. Do not let a fallback
+# scan select another SQLite file from the repository or an old profile.
+expected_db_path = _expected_database_path(config, config_path)
+db_config = {**config, "db_path": str(expected_db_path)}
 profile = config.get("profile", {}) if isinstance(config.get("profile", {}), dict) else {}
 if "cv_text" not in st.session_state:
     st.session_state.cv_text = str(profile.get("resume_text", "") or "")
@@ -99,7 +120,7 @@ if "last_scrape" not in st.session_state:
 if "cv_fingerprint" not in st.session_state:
     st.session_state.cv_fingerprint = ""
 
-raw_jobs, db_diagnostics = load_jobs_from_sqlite(config)
+raw_jobs, db_diagnostics = load_jobs_from_sqlite(db_config)
 jobs: list[dict[str, Any]] = []
 seen: set[str] = set()
 for raw in raw_jobs:
@@ -185,6 +206,7 @@ def _run_scraper_live(command, env, cwd, timeout_seconds, log_placeholder):
 with st.sidebar:
     st.markdown("## Tu espacio")
     st.caption("Ajusta la búsqueda a lo que de verdad te interesa.")
+    st.caption(f"Motor {APP_BUILD}")
     target_title = st.text_input(
         "Puestos objetivo",
         key="target_title",
@@ -245,8 +267,9 @@ with st.sidebar:
 
     with st.expander("Diagnóstico"):
         st.write(f"Configuración: {config_path or 'no encontrada'}")
-        st.write("Base de datos: lectura de solo lectura; las ofertas no se inventan.")
-        for item in db_diagnostics[:8]:
+        st.write(f"Base de datos esperada por el motor: {expected_db_path}")
+        st.write("El panel lee en solo lectura la misma ruta SQLite que utiliza el motor.")
+        for item in db_diagnostics:
             st.caption(item)
         if not st.session_state.cv_text:
             st.info("Sin CV: el ranking usa títulos y palabras clave de la configuración.")

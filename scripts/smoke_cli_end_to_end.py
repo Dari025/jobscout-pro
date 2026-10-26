@@ -32,6 +32,7 @@ def main() -> int:
         template["search"]["sites"] = ["freehire"]
         template["search"]["results_per_site"] = 10
         template["search"]["hours_old"] = 720
+        template.setdefault("scraping", {})
         template["scraping"]["delay_min_seconds"] = 0
         template["scraping"]["delay_max_seconds"] = 0
         template["scraping"]["max_retries"] = 0
