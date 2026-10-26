@@ -6,6 +6,11 @@ on:
     paths:
       - "src/job_scout/scrapers/freehire.py"
       - "src/job_scout/scrapers/arbeitnow.py"
+      - "src/job_scout/cli.py"
+      - "src/job_scout/db.py"
+      - "src/job_scout/config.py"
+      - "busqueda.example.yaml"
+      - "scripts/smoke_cli_end_to_end.py"
       - "jobscout_links.py"
       - "scripts/smoke_search_sources.py"
       - ".github/workflows/live-search-smoke.yml"
@@ -27,4 +32,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Probe live public search APIs and exact posting URLs
         run: python scripts/smoke_search_sources.py
+        continue-on-error: true
+      - name: Run the real CLI and verify dashboard SQLite reader sees saved jobs
+        run: python scripts/smoke_cli_end_to_end.py
         continue-on-error: true
