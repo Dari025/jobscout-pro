@@ -80,6 +80,46 @@ def probe_arbeitnow(client: httpx.Client) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def probe_targeted_searches() -> None:
+    """Run the actual scraper logic for the two locations the dashboard targets."""
+    from job_scout.config import ScrapingConfig
+    from job_scout.models import ScrapeParams
+    from job_scout.scrapers.arbeitnow import ArbeitnowScraper
+    from job_scout.scrapers.freehire import FreehireScraper
+
+    cfg = ScrapingConfig(
+        delay_min_seconds=0,
+        delay_max_seconds=0,
+        request_timeout=8,
+        max_retries=0,
+        max_pages=1,
+        fetch_descriptions=False,
+    )
+    locations = ("Madrid, Spain", "Remote, Europe")
+    freehire = FreehireScraper(cfg)
+    arbeitnow = ArbeitnowScraper(cfg)
+    for location in locations:
+        params = ScrapeParams(
+            search_term="Data Analyst",
+            location=location,
+            results_wanted=10,
+            hours_old=720,
+        )
+        for label, scraper in (("Freehire", freehire), ("Arbeitnow", arbeitnow)):
+            try:
+                jobs = scraper.scrape(params)
+                linked = sum(1 for job in jobs if is_specific_job_url(job.url))
+                print(
+                    f"Targeted query {label} | Data Analyst | {location}: "
+                    f"{len(jobs)} results, {linked} with specific vacancy URLs"
+                )
+            except Exception as exc:
+                print(
+                    f"Targeted query WARNING {label} | Data Analyst | {location}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+
 def main() -> int:
     results = {}
     with httpx.Client(
@@ -89,6 +129,10 @@ def main() -> int:
     ) as client:
         results["Freehire"] = probe_freehire(client)
         results["Arbeitnow"] = probe_arbeitnow(client)
+
+    # Connectivity and payload checks alone are not enough: exercise the same
+    # source adapters/region filters used by the deployed search button as well.
+    probe_targeted_searches()
 
     failed = False
     for provider, (ok, detail) in results.items():
