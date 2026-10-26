@@ -1,0 +1,30 @@
+name: Live search source smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/job_scout/scrapers/freehire.py"
+      - "src/job_scout/scrapers/arbeitnow.py"
+      - "jobscout_links.py"
+      - "scripts/smoke_search_sources.py"
+      - ".github/workflows/live-search-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe-public-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minimal parser dependencies
+        run: pip install httpx pydantic PyYAML beautifulsoup4
+      - name: Probe live public search APIs and exact posting URLs
+        run: python scripts/smoke_search_sources.py
+        continue-on-error: true

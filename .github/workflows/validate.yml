@@ -15,6 +15,6 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt pytest
-      - run: python -m compileall -q app.py notificar_top.py jobscout_links.py src/job_scout
+      - run: python -m compileall -q app.py notificar_top.py jobscout_links.py src/job_scout scripts
       - run: PYTHONPATH=src python -m job_scout.cli --help
       - run: python -m pytest -q
