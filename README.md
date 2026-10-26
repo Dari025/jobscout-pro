@@ -18,6 +18,15 @@ El motor de recogida incluido en `src/job_scout` se basa en [job-scout](https://
 
 No se garantiza una duración fija: el tiempo depende de la respuesta de cada portal. El panel muestra el registro de la ejecución y conserva los resultados que el motor haya guardado.
 
+## Fuentes de búsqueda y diagnóstico
+
+La búsqueda rápida empieza por **Freehire** y **Arbeitnow**, fuentes con respuestas estructuradas, y usa la URL específica del anuncio o la candidatura de origen. La búsqueda completa amplía la cobertura con LinkedIn e Indeed. Google Jobs se omite porque el resultado actual requiere JavaScript y el parser del servidor no puede recogerlo de forma fiable.
+
+- Freehire publica una API de lectura gratuita para uso personal y no comercial. Si conviertes la app en un servicio ofrecido a otras personas, consulta su licencia y plan de API antes de compartir vacantes de esa fuente.
+- Arbeitnow ofrece un feed de vacantes con enlaces a páginas de anuncio individuales; la aplicación filtra los resultados por puesto y ubicación.
+- La aplicación registra por fuente las consultas, anuncios recibidos, consultas vacías y errores. Si ninguna fuente devuelve ofertas utilizables, la búsqueda termina con advertencia y código de error: ya no se presenta un resultado vacío como si todo hubiera salido bien.
+- Los portales pueden limitar peticiones, cambiar sus páginas o retirar anuncios. La comprobación de URL confirma que el enlace es específico, pero no garantiza que el puesto siga abierto; comprueba la oferta antes de solicitarla.
+
 ## Instalación en Windows
 
 Requiere Python 3.10 o superior.

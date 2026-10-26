@@ -21,6 +21,7 @@ if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
 
 from jobscout_links import (  # noqa: E402
     canonicalize_row,
+    canonical_job_identity,
     choose_job_links,
     load_config,
     load_jobs_from_sqlite,
@@ -110,17 +111,7 @@ for raw in raw_jobs:
     source_url, apply_url = choose_job_links(job)
     job["job_url"], job["job_url_direct"] = source_url, apply_url
     job["has_specific_link"] = bool(source_url or apply_url)
-    source = str(job.get("source") or "").strip().lower()
-    job_id = str(job.get("id") or "").strip()
-    if job_id:
-        identity = f"id:{source}:{job_id}"
-    elif source_url or apply_url:
-        identity = f"url:{(source_url or apply_url).rstrip('/')}"
-    else:
-        identity = "text:" + "|".join(
-            str(job.get(key) or "").strip().casefold()
-            for key in ("title", "company", "location", "date_posted")
-        )
+    identity = canonical_job_identity(job)
     if identity in seen:
         continue
     seen.add(identity)
@@ -282,6 +273,9 @@ if st.session_state.pop("scrape_requested", False):
                 command.append("--quick")
             child_env = os.environ.copy()
             child_env["PYTHONUNBUFFERED"] = "1"
+            # Pass only the target titles typed in the UI; the uploaded CV stays
+            # in Streamlit session state and is never copied into the subprocess env.
+            child_env["JOBSCOUT_TARGET_TITLE"] = target_title
             existing_pythonpath = child_env.get("PYTHONPATH", "")
             child_env["PYTHONPATH"] = str(SRC_DIR) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
             timeout_seconds = 180 if is_quick else 900
@@ -302,9 +296,13 @@ if st.session_state.pop("scrape_requested", False):
                         status.update(label="Búsqueda detenida por tiempo límite", state="error", expanded=True)
                         success = False
                     elif return_code == 0:
-                        message = f"Búsqueda terminada en {elapsed} s. Ya puedes revisar las oportunidades nuevas."
+                        message = f"Búsqueda terminada en {elapsed} s. Ya puedes revisar las oportunidades encontradas."
                         status.update(label="Búsqueda completada", state="complete", expanded=False)
                         success = True
+                    elif return_code == 2 and "No valid postings found" in "\n".join(logs):
+                        message = "La búsqueda terminó, pero ninguna fuente entregó vacantes utilizables. Revisa el diagnóstico por fuente y los errores del registro."
+                        status.update(label="Sin vacantes válidas: revisa las fuentes", state="error", expanded=True)
+                        success = False
                     else:
                         message = f"El motor terminó con código {return_code}. Consulta el diagnóstico para ver el detalle."
                         status.update(label="La búsqueda terminó con incidencias", state="error", expanded=True)

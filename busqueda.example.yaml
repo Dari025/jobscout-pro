@@ -49,16 +49,23 @@ search:
     - "Risk Analyst Intern"
     - "Quantitative Analyst Intern"
     - "Business Intelligence Analyst"
+    - "Data Science Intern"
+    - "Graduate Data Analyst"
+    - "Economics Analyst"
+    - "Operations Analyst"
+    - "Financial Data Analyst"
   locations:
     - "Madrid, Spain"
     - "Remote, Europe"
-  # Fuentes con cobertura más útil para las búsquedas iniciales.
+  # APIs públicas como base fiable; portales de scraping como cobertura adicional.
+  # Google Jobs se omite porque ya no devuelve resultados a parsers sin JavaScript.
   sites:
-    - "google"
+    - "freehire"
+    - "arbeitnow"
     - "linkedin"
     - "indeed"
   results_per_site: 20
-  hours_old: 168
+  hours_old: 720
   work_types:
     - "Internship"
     - "Part-time"

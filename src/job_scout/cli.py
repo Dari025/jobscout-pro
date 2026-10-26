@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
@@ -72,25 +74,33 @@ def _filter_alert_jobs(jobs: list, cfg) -> list:
     ]
 
 
-QUICK_SITE_PRIORITY = ("google", "linkedin", "indeed")
+QUICK_SITE_PRIORITY = ("freehire", "arbeitnow")
+FALLBACK_SITE_PRIORITY = ("linkedin", "indeed", "glassdoor", "ziprecruiter", "bayt")
 
 
 def quick_search_scope(
     sites: list[str], terms: list[str], locations: list[str]
 ) -> tuple[list[str], list[str], list[str]]:
-    """Trim a full search into a useful, bounded quick pass without changing full mode."""
-    normalized_sites = [str(value).strip().lower() for value in sites if str(value).strip()]
+    """Prefer API-backed sources; never spend the quick budget on Google Jobs' JS-only page."""
+    normalized_sites = list(dict.fromkeys(
+        str(value).strip().lower()
+        for value in sites
+        if str(value).strip() and str(value).strip().lower() != "google"
+    ))
     available = set(normalized_sites)
-    prioritized = [name for name in QUICK_SITE_PRIORITY if name in available]
-    selected_sites = prioritized if prioritized else normalized_sites[:3]
-    return selected_sites, list(terms[:4]), list(locations[:2])
+    api_sites = [name for name in QUICK_SITE_PRIORITY if name in available]
+    fallback_sites = [name for name in FALLBACK_SITE_PRIORITY if name in available]
+    selected_sites = api_sites if api_sites else fallback_sites[:3]
+    selected_terms = list(terms[:5])
+    selected_locations = list(locations[:2])
+    return selected_sites, selected_terms, selected_locations
 
 
 @app.command()
 def scrape(
     site: str = typer.Option(
         None,
-        help="Scrape specific site: linkedin, indeed, google, glassdoor, ziprecruiter, bayt",
+        help="Scrape specific site: freehire, arbeitnow, linkedin, indeed, glassdoor, ziprecruiter, bayt",
     ),
     term: str = typer.Option(None, help="Override search term"),
     quick: bool = typer.Option(
@@ -109,7 +119,27 @@ def scrape(
 
     sites = [site] if site else cfg.search.sites
     terms = [term] if term else cfg.search.terms
+    if not term:
+        requested_title = os.getenv("JOBSCOUT_TARGET_TITLE", "").strip()
+        requested_terms = [
+            value.strip()
+            for value in re.split(r"[/,;|]+", requested_title)
+            if value.strip()
+        ]
+        if requested_terms:
+            terms = list(dict.fromkeys(requested_terms + terms))
     locations = cfg.search.locations
+
+    # Google Jobs' current server-rendered results don't provide reliable structured
+    # listings to this parser. Report and omit it rather than silently counting zero.
+    if "google" in sites:
+        console.print("[yellow]Skipping Google Jobs: its current results require JavaScript and this scraper cannot reliably parse them. Using API-backed and other configured sources instead.[/yellow]")
+        sites = [name for name in sites if name != "google"]
+    if not sites:
+        console.print("[red]No supported search sources are configured.[/red]")
+        if db:
+            db.close()
+        raise typer.Exit(code=2)
 
     if quick:
         sites, terms, locations = quick_search_scope(sites, terms, locations)
@@ -118,19 +148,36 @@ def scrape(
         cfg.scraping.max_retries = 0
         cfg.scraping.request_timeout = min(cfg.scraping.request_timeout, 8)
         cfg.scraping.fetch_descriptions = False
+        # API-backed sources are light, so allow concurrent queries without making
+        # the legacy portal scrapers generate unbounded fan-out.
+        cfg.scraping.max_workers = min(max(cfg.scraping.max_workers, 6), 8)
 
     new_high_score: list = []
     total_found = 0
     total_new = 0
     total_filtered = 0
+    source_stats = {
+        name: {"queries": 0, "listings": 0, "errors": 0, "empty": 0}
+        for name in set(sites)
+    }
 
-    # Build task list for concurrent execution
-    tasks = [
-        (site_name, search_term, loc)
-        for site_name in sites
-        for search_term in terms
-        for loc in locations
-    ]
+    # Query the APIs for Spain and remote Europe. Legacy board scrapers often
+    # misinterpret "Remote, Europe" as a city and return false zero-result runs;
+    # limit those to the concrete Spanish/Madrid location instead.
+    tasks = []
+    for site_name in sites:
+        site_locations = locations
+        if site_name not in {"freehire", "arbeitnow"}:
+            concrete = [
+                loc for loc in locations
+                if not ("remote" in str(loc).casefold() and "europe" in str(loc).casefold())
+            ]
+            site_locations = concrete or locations[:1]
+        tasks.extend(
+            (site_name, search_term, loc)
+            for search_term in terms
+            for loc in site_locations
+        )
 
     if quick:
         console.print(
@@ -168,6 +215,14 @@ def scrape(
         for future in as_completed(futures):
             task, started_at = futures[future]
             site_name, search_term, location, jobs, error = future.result()
+            stats = source_stats[site_name]
+            stats["queries"] += 1
+            if error:
+                stats["errors"] += 1
+            else:
+                stats["listings"] += len(jobs)
+                if not jobs:
+                    stats["empty"] += 1
 
             run = ScrapeRun(
                 site=Site(site_name),
@@ -229,6 +284,12 @@ def scrape(
     if total_filtered:
         parts.append(f"{total_filtered} filtered by dealbreakers")
     console.print(f"\n[bold]Done.[/bold] {', '.join(parts)}.")
+    console.print("[bold]Source diagnostics:[/bold]")
+    for name, stats in sorted(source_stats.items()):
+        console.print(
+            f"  {name}: {stats['listings']} listings / {stats['queries']} queries, "
+            f"{stats['empty']} empty, {stats['errors']} errors"
+        )
 
     if new_high_score and not dry_run:
         new_high_score.sort(key=lambda j: j.score, reverse=True)
@@ -239,6 +300,15 @@ def scrape(
 
     if db:
         db.close()
+
+    # A zero-result crawl is not a successful search. Surface a non-zero exit code
+    # so the dashboard can show a warning and users can inspect source diagnostics.
+    if total_found == 0:
+        console.print(
+            "[red]No valid postings found. Check the source diagnostics above; "
+            "one or more providers may be blocked, unavailable, or returning no matches.[/red]"
+        )
+        raise typer.Exit(code=2)
 
 
 @app.command("list")

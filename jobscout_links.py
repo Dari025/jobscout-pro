@@ -10,7 +10,7 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunsplit
 from typing import Any, Iterable
 
 
@@ -128,6 +128,52 @@ def best_job_url(row: dict[str, Any]) -> str:
     """Return an exact-looking source page, otherwise a distinct application URL."""
     source, direct = choose_job_links(row)
     return source or direct
+
+
+def canonical_job_identity(row: dict[str, Any]) -> str:
+    """Build a cross-source dedup key, preferring the concrete posting URL over source IDs."""
+    job = canonicalize_row(row)
+    source_url, apply_url = choose_job_links(job)
+    chosen = source_url or apply_url
+    if chosen:
+        try:
+            parsed = urlparse(chosen)
+            host = (parsed.hostname or "").lower().rstrip(".")
+            if host.startswith("www."):
+                host = host[4:]
+            # Keep identity query parameters (e.g. Indeed's jk) but drop tracking noise.
+            query_pairs = [
+                (key, value)
+                for key, value in parse_qsl(parsed.query, keep_blank_values=False)
+                if not key.lower().startswith("utm_")
+                and key.lower() not in {"trk", "trackingid", "ref", "referrer", "campaignid"}
+            ]
+            query_pairs.sort()
+            netloc = host
+            if parsed.port and not (
+                (parsed.scheme.lower() == "https" and parsed.port == 443)
+                or (parsed.scheme.lower() == "http" and parsed.port == 80)
+            ):
+                netloc = f"{host}:{parsed.port}"
+            normalized_url = urlunsplit((
+                parsed.scheme.lower(),
+                netloc,
+                (parsed.path or "/").rstrip("/") or "/",
+                urlencode(query_pairs),
+                "",
+            ))
+            return f"url:{normalized_url}"
+        except (ValueError, TypeError):
+            pass
+
+    source = _text(job.get("source")).casefold()
+    job_id = _text(job.get("id"))
+    if job_id:
+        return f"id:{source}:{job_id}"
+    return "text:" + "|".join(
+        _normalise_words(job.get(key))
+        for key in ("title", "company", "location", "date_posted")
+    )
 
 
 def canonicalize_row(row: dict[str, Any]) -> dict[str, Any]:

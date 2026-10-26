@@ -27,6 +27,8 @@ def compute_content_key(
 
 
 class Site(str, Enum):
+    FREEHIRE = "freehire"
+    ARBEITNOW = "arbeitnow"
     LINKEDIN = "linkedin"
     INDEED = "indeed"
     GOOGLE = "google"

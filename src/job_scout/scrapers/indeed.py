@@ -61,7 +61,12 @@ class IndeedScraper(BaseScraper):
         )
 
         headers = INDEED_HEADERS.copy()
-        headers["indeed-co"] = "US"
+        location_lower = str(params.location or "").casefold()
+        is_spain = any(token in location_lower for token in ("spain", "españa", "madrid"))
+        headers["indeed-co"] = "ES" if is_spain else "US"
+        if is_spain:
+            headers["indeed-locale"] = "es-ES"
+            headers["accept-language"] = "es-ES,es;q=0.9,en;q=0.8"
 
         resp = self._post_with_retry(
             client,
@@ -84,18 +89,18 @@ class IndeedScraper(BaseScraper):
         jobs = []
         for result in results:
             job_data = result.get("job") or result
-            job = self._parse_job(job_data, seen_urls)
+            job = self._parse_job(job_data, seen_urls, country_code="ES" if is_spain else "US")
             if job:
                 jobs.append(job)
 
         return jobs, next_cursor
 
-    def _parse_job(self, job: dict, seen_urls: set) -> Job | None:
+    def _parse_job(self, job: dict, seen_urls: set, country_code: str = "US") -> Job | None:
         key = str(job.get("key") or "").strip()
         # A missing source ID produces a generic Indeed page, not a real vacancy.
         if not key:
             return None
-        job_url = f"https://www.indeed.com/viewjob?jk={key}"
+        job_url = f"https://es.indeed.com/viewjob?jk={key}" if country_code.upper() == "ES" else f"https://www.indeed.com/viewjob?jk={key}"
         if job_url in seen_urls:
             return None
         seen_urls.add(job_url)
@@ -109,7 +114,7 @@ class IndeedScraper(BaseScraper):
         location = Location(
             city=loc.get("city"),
             state=loc.get("admin1Code"),
-            country=loc.get("countryCode", "US"),
+            country=loc.get("countryCode") or country_code,
         )
 
         # Compensation

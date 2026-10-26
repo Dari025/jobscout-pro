@@ -119,7 +119,9 @@ class BaseScraper(ABC):
 
 
 def get_scraper(site: str, config: ScrapingConfig) -> BaseScraper:
+    from job_scout.scrapers.arbeitnow import ArbeitnowScraper
     from job_scout.scrapers.bayt import BaytScraper
+    from job_scout.scrapers.freehire import FreehireScraper
     from job_scout.scrapers.glassdoor import GlassdoorScraper
     from job_scout.scrapers.google import GoogleScraper
     from job_scout.scrapers.indeed import IndeedScraper
@@ -127,6 +129,8 @@ def get_scraper(site: str, config: ScrapingConfig) -> BaseScraper:
     from job_scout.scrapers.ziprecruiter import ZipRecruiterScraper
 
     registry = {
+        "freehire": FreehireScraper,
+        "arbeitnow": ArbeitnowScraper,
         "linkedin": LinkedInScraper,
         "indeed": IndeedScraper,
         "google": GoogleScraper,

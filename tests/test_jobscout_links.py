@@ -1,6 +1,6 @@
 import sqlite3
 
-from jobscout_links import canonicalize_row, choose_job_links, is_specific_job_url, load_jobs_from_sqlite, score_job
+from jobscout_links import canonical_job_identity, canonicalize_row, choose_job_links, is_specific_job_url, load_jobs_from_sqlite, score_job
 
 
 def test_rejects_linkedin_search_results():
@@ -102,3 +102,39 @@ def test_location_is_assembled_from_upstream_sqlite_fields():
     assert "Community of Madrid" in normalized["location"]
     assert "ES" in normalized["location"]
     assert "Remote" in normalized["location"]
+
+
+def test_canonical_job_identity_deduplicates_tracking_variants_across_sources():
+    linkedin = {
+        "source": "linkedin",
+        "id": 101,
+        "title": "Data Analyst",
+        "company": "Example Ltd",
+        "job_url": "https://www.linkedin.com/jobs/view/123456789/?trk=public_jobs&utm_source=email",
+    }
+    repeated = {
+        "source": "indeed",
+        "id": 202,
+        "title": "Data Analyst",
+        "company": "Example Ltd",
+        "job_url": "https://linkedin.com/jobs/view/123456789",
+    }
+    assert canonical_job_identity(linkedin) == canonical_job_identity(repeated)
+
+
+def test_canonical_job_identity_preserves_meaningful_application_parameters():
+    first = {
+        "source": "indeed",
+        "id": 101,
+        "title": "Analyst",
+        "company": "Example",
+        "job_url": "https://es.indeed.com/viewjob?jk=abc123&utm_source=mail",
+    }
+    second = {
+        "source": "indeed",
+        "id": 102,
+        "title": "Analyst",
+        "company": "Example",
+        "job_url": "https://es.indeed.com/viewjob?jk=xyz789",
+    }
+    assert canonical_job_identity(first) != canonical_job_identity(second)
