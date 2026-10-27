@@ -27,6 +27,35 @@ SEARCH_LOCATION_OPTIONS = [
     "Remote, Europe",
 ]
 
+# Per-session keyword limits. These only feed the dashboard ranking of the
+# current browser session; they are never written to disk.
+MAX_SESSION_KEYWORDS = 20
+MAX_SESSION_KEYWORD_CHARS = 40
+
+
+def parse_session_keywords(raw: Any) -> list[str]:
+    """Split a free-text list of skills into unique, trimmed keywords.
+
+    The result is used only to weight the ranking of the current session, so a
+    colon or a semicolon is a separator too and duplicates are dropped
+    case-insensitively while keeping the first spelling the user typed.
+    """
+    parts = re.split(r"[,;\n|]+", str(raw or ""))
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        term = " ".join(part.split())[:MAX_SESSION_KEYWORD_CHARS].strip()
+        if not term:
+            continue
+        folded = term.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        keywords.append(term)
+        if len(keywords) >= MAX_SESSION_KEYWORDS:
+            break
+    return keywords
+
 
 def parse_target_terms(target_title: str) -> list[str]:
     """Parse only the titles entered by the current user; no implicit role defaults."""
@@ -42,21 +71,30 @@ def build_workspace_config(
     workspace_dir: str | Path,
     target_title: str,
     search_locations: list[str] | tuple[str, ...],
+    custom_keywords: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Create a neutral config and bind its SQLite database to one browser session.
 
     CV contents are deliberately not copied into the YAML. Uploaded CV text stays in
     Streamlit session memory and is only used for ranking in that same session.
+
+    ``custom_keywords`` are the skills the visitor typed for this session. They land
+    in the "strong" tier so the ranking can weigh them, and they never leave the
+    session: only the in-memory config used for scoring receives them.
     """
     workspace = Path(workspace_dir).expanduser().resolve()
     result = copy.deepcopy(base_config)
+
+    keywords = copy.deepcopy(EMPTY_KEYWORDS)
+    if custom_keywords:
+        keywords["strong"] = [str(term).strip() for term in custom_keywords if str(term).strip()]
 
     profile = dict(result.get("profile") or {})
     profile.update({
         "name": "",
         "target_title": str(target_title or "").strip(),
         "resume_text": "",
-        "keywords": copy.deepcopy(EMPTY_KEYWORDS),
+        "keywords": keywords,
         "target_companies": copy.deepcopy(EMPTY_COMPANY_TIERS),
         "title_signals": [],
         "target_levels": [],

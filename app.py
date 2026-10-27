@@ -36,6 +36,7 @@ from job_scout.workspace import (  # noqa: E402
     SEARCH_LOCATION_OPTIONS,
     build_workspace_config,
     cleanup_stale_session_workspaces,
+    parse_session_keywords,
     parse_target_terms,
     touch_session_workspace,
     write_workspace_config,
@@ -360,6 +361,31 @@ with st.sidebar:
         key="search_locations_clean",
         help="Elige una o varias ubicaciones. No se selecciona ninguna por defecto.",
     )
+
+    with st.expander("Personalizar el ranking (opcional)", expanded=False):
+        raw_keywords = st.text_area(
+            "Tus habilidades o palabras clave",
+            key="session_keywords_clean",
+            placeholder="Ej. python, sql, econometría, series temporales",
+            max_chars=500,
+            height=90,
+            help=(
+                "Se usan solo para ordenar las ofertas de esta sesión. "
+                "No se guardan en disco, ni en la base de datos, ni se comparten con otras sesiones."
+            ),
+        )
+        session_keywords = parse_session_keywords(raw_keywords)
+        if session_keywords:
+            st.caption(
+                f"{len(session_keywords)} palabra(s) clave activas solo en esta sesión: "
+                + ", ".join(session_keywords[:8])
+                + ("…" if len(session_keywords) > 8 else "")
+            )
+        else:
+            st.caption(
+                "Sin palabras clave, el índice de encaje se calcula solo con el título del puesto "
+                "y, si subes un CV, con su contenido."
+            )
 
     st.markdown("### Currículum (opcional)")
     st.caption(
@@ -700,7 +726,8 @@ if last_scrape:
             st.code(last_scrape["logs"], language="text")
 
 scoring_config = build_workspace_config(
-    config, session_dir, target_title, search_locations
+    config, session_dir, target_title, search_locations,
+    custom_keywords=session_keywords,
 )
 for job in jobs:
     job["calculated_score"] = score_job(job, scoring_config, st.session_state.cv_text)

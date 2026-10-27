@@ -153,3 +153,57 @@ def test_cleanup_preserves_current_workspace_even_if_old(tmp_path):
 
     assert cleanup_stale_session_workspaces(root, current, ttl_hours=24) == 0
     assert current.exists()
+
+
+# --- Per-session keywords (optional ranking personalisation) -----------------
+
+from job_scout.workspace import (  # noqa: E402
+    MAX_SESSION_KEYWORDS,
+    parse_session_keywords,
+)
+
+
+def test_session_keywords_split_on_any_common_separator():
+    parsed = parse_session_keywords("python, sql; econometría\nseries temporales | R")
+    assert parsed == ["python", "sql", "econometría", "series temporales", "R"]
+
+
+def test_session_keywords_drop_duplicates_and_blank_entries():
+    parsed = parse_session_keywords("Python, python ,, PYTHON, sql")
+    assert parsed == ["Python", "sql"]
+
+
+def test_session_keywords_are_bounded():
+    raw = ",".join(f"habilidad {index}" for index in range(MAX_SESSION_KEYWORDS + 10))
+    assert len(parse_session_keywords(raw)) == MAX_SESSION_KEYWORDS
+    assert len(parse_session_keywords("x" * 200)) == 1
+    assert len(parse_session_keywords("x" * 200)[0]) <= 40
+
+
+def test_custom_keywords_fill_only_the_strong_tier():
+    config = build_workspace_config(
+        {}, "session-under-test", "Data Analyst", [], custom_keywords=["python", "sql"]
+    )
+    assert config["profile"]["keywords"] == {
+        "critical": [], "strong": ["python", "sql"], "moderate": [], "weak": []
+    }
+
+
+def test_without_custom_keywords_every_tier_stays_empty():
+    """Regression: sessions that type nothing must behave exactly as before."""
+    template = {"profile": {"keywords": {"critical": ["economics"], "strong": ["python"]}}}
+    config = build_workspace_config(template, "session-under-test", "Data Analyst", [])
+    assert config["profile"]["keywords"] == {
+        "critical": [], "strong": [], "moderate": [], "weak": []
+    }
+
+
+def test_write_path_cannot_receive_session_keywords():
+    """The scraper config is written to disk, so it must not accept keywords.
+
+    Session keywords live only in the in-memory scoring config; if someone ever
+    adds them to the write path they would end up in a YAML file.
+    """
+    import inspect
+
+    assert "custom_keywords" not in inspect.signature(write_workspace_config).parameters

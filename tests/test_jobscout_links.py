@@ -216,3 +216,28 @@ def test_canonicalize_row_preserves_compensation_and_job_type_metadata():
     assert normalized["comp_interval"] == "yearly"
     assert normalized["job_type"] == '["internship", "part_time"]'
     assert normalized["is_remote"] == 1
+
+
+def test_session_keywords_raise_the_score_of_a_weakly_titled_vacancy():
+    """A vacancy whose title does not match still gains relevance from the skills."""
+    row = {
+        "title": "Business Intelligence Intern",
+        "company": "Example Ltd",
+        "description": "You will use python, sql and econometrics for forecasting.",
+        "source": "freehire",
+    }
+    base_profile = {
+        "target_title": "Data Analyst",
+        "resume_text": "",
+        "title_signals": [],
+        "target_companies": {"tier1": [], "tier2": [], "tier3": []},
+    }
+    empty_keywords = {"critical": [], "strong": [], "moderate": [], "weak": []}
+
+    without = score_job(row, {"profile": {**base_profile, "keywords": empty_keywords}})
+    with_keywords = score_job(
+        row,
+        {"profile": {**base_profile, "keywords": {**empty_keywords, "strong": ["python", "econometrics"]}}},
+    )
+
+    assert with_keywords > without
