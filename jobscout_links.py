@@ -18,6 +18,10 @@ _SRC_DIR = Path(__file__).resolve().parent / "src"
 if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+from job_scout.matching import (
+    contains_normalised_term as _contains_norm_term,
+    normalise_words as _normalise_words,
+)
 from job_scout.role_terms import role_search_variants
 
 
@@ -347,23 +351,6 @@ def load_jobs_from_sqlite(config: dict[str, Any] | None = None,
     return [], diagnostics
 
 
-def _normalise_words(value: Any) -> str:
-    import unicodedata
-    value = unicodedata.normalize("NFKD", _text(value).casefold())
-    value = "".join(ch for ch in value if not unicodedata.combining(ch))
-    return re.sub(r"\s+", " ", value)
-
-
-def _contains_term(haystack: str, term: Any) -> bool:
-    normalized_term = _normalise_words(term)
-    if not normalized_term:
-        return False
-    # Single-character skills such as "R" must be whole words; never match
-    # the letter inside ordinary words ("remote", "research", etc.).
-    pattern = r"(?<!\w)" + re.escape(normalized_term).replace(r"\ ", r"\s+") + r"(?!\w)"
-    return re.search(pattern, haystack) is not None
-
-
 # Domain signals are deliberately narrow: generic terms such as "scientist",
 # "research", "analysis", "data" and "remote" must not identify a profession.
 _DOMAIN_LABELS = {
@@ -466,7 +453,7 @@ def _domain_scores(value: Any) -> dict[str, float]:
     """Score distinctive professional-domain signals in text, not generic vocabulary."""
     text = _normalise_words(value)
     return {
-        family: sum(weight for term, weight in signals if _contains_term(text, term))
+        family: sum(weight for term, weight in signals if _contains_norm_term(text, term))
         for family, signals in _DOMAIN_SIGNALS.items()
     }
 
@@ -566,8 +553,11 @@ def professional_domain_mismatch(
 
 
 def _title_phrase_matches(title: str, phrase: str) -> bool:
-    """Match whole phrases/words, allowing the compound 'geoscientist' for 'scientist'."""
-    if _contains_term(title, phrase):
+    """Match whole phrases/words, allowing the compound 'geoscientist' for 'scientist'.
+
+    ``title`` must already be normalised (see ``score_job``).
+    """
+    if _contains_norm_term(title, phrase):
         return True
     # "Scientist" is commonly compounded in legitimate job titles (e.g. geoscientist).
     if phrase in {"scientist", "scientists"}:
@@ -585,7 +575,7 @@ def _role_alias_title_score(title: str, target_titles: list[str]) -> float:
             normalized_alias = _normalise_words(alias)
             if not normalized_alias:
                 continue
-            if _contains_term(title, normalized_alias) or _title_phrase_matches(title, normalized_alias):
+            if _contains_norm_term(title, normalized_alias) or _title_phrase_matches(title, normalized_alias):
                 best = max(best, 0.80)
                 break
     return best
@@ -627,12 +617,12 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
             phrase = _normalise_words(target_phrase)
             if not phrase:
                 continue
-            if _contains_term(title, phrase) or _title_phrase_matches(title, phrase):
+            if _contains_norm_term(title, phrase) or _title_phrase_matches(title, phrase):
                 exact_scores.append(1.0)
                 continue
             tokens = [token for token in phrase.split() if len(token) > 2]
             if tokens:
-                exact_scores.append(sum(1 for token in tokens if _contains_term(title, token)) / len(tokens))
+                exact_scores.append(sum(1 for token in tokens if _contains_norm_term(title, token)) / len(tokens))
         if exact_scores:
             title_score = max(exact_scores)
         # Search adapters can deliberately return a close role variant (e.g.
@@ -653,7 +643,7 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
                 if not keyword:
                     continue
                 total_weight += weight
-                if _contains_term(text, keyword):
+                if _contains_norm_term(text, keyword):
                     matched_weight += weight
     keyword_score = matched_weight / total_weight if total_weight else None
 

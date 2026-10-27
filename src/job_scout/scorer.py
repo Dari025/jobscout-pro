@@ -6,6 +6,7 @@ import re
 from datetime import date
 
 from job_scout.config import ProfileConfig
+from job_scout.matching import contains_normalised_term, normalise_words
 from job_scout.models import Job
 
 
@@ -56,13 +57,13 @@ class JobScorer:
         return False
 
     def _score_keywords(self, job: Job) -> int:
-        text = f"{job.title} {job.description}".lower()
+        text = normalise_words(f"{job.title} {job.description}")
         kw = self.profile.keywords
 
-        critical_hits = sum(1 for k in kw.critical if k.lower() in text)
-        strong_hits = sum(1 for k in kw.strong if k.lower() in text)
-        moderate_hits = sum(1 for k in kw.moderate if k.lower() in text)
-        weak_hits = sum(1 for k in kw.weak if k.lower() in text)
+        critical_hits = sum(1 for k in kw.critical if contains_normalised_term(text, k))
+        strong_hits = sum(1 for k in kw.strong if contains_normalised_term(text, k))
+        moderate_hits = sum(1 for k in kw.moderate if contains_normalised_term(text, k))
+        weak_hits = sum(1 for k in kw.weak if contains_normalised_term(text, k))
 
         # Gate: 0 critical hits = keyword score capped at 10
         if critical_hits == 0:
@@ -88,10 +89,10 @@ class JobScorer:
         return 0
 
     def _score_title(self, job: Job) -> int:
-        title = job.title.lower()
+        title = normalise_words(job.title)
         best = 0
         for sig in self.profile.title_signals:
-            if sig.pattern.lower() in title:
+            if contains_normalised_term(title, sig.pattern):
                 best = max(best, sig.points)
         return min(20, best)
 
