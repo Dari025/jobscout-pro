@@ -4,6 +4,26 @@ JobScout Pro es una aplicación Streamlit para recoger, visualizar, filtrar y pr
 
 El motor de recogida incluido en `src/job_scout` se basa en [job-scout](https://github.com/weberwcwei/job-scout), distribuido bajo licencia MIT. Consulta `THIRD_PARTY_NOTICES.md`.
 
+## Cómo funciona, en una imagen
+
+```mermaid
+flowchart TD
+    A["Visitante<br/>puestos + ubicaciones + habilidades"] --> B["app.py<br/>(Streamlit)"]
+    B --> C["Carpeta temporal única<br/>por sesión de navegador"]
+    C --> D["Subproceso<br/>python -m job_scout.cli scrape"]
+    D --> E["Freehire · Arbeitnow<br/>LinkedIn · Indeed"]
+    E --> F["jobs.sqlite<br/>de esta sesión"]
+    F --> G["Análisis del anuncio<br/>salario · experiencia · contrato · jornada"]
+    G --> H["Índice 0-100<br/>título + habilidades + CV"]
+    H --> I["Tarjetas con evidencia,<br/>enlaces e incógnitas marcadas"]
+```
+
+Tres decisiones que explican casi todo lo demás:
+
+1. **Cada sesión tiene su propia carpeta y su propia base de datos.** Nada se comparte entre visitantes: si tu sesión no ha buscado nada, la app te lo dice en vez de enseñarte resultados ajenos.
+2. **La búsqueda corre en un subproceso** con un entorno saneado. Si un portal bloquea o tarda, la interfaz no se cuelga y tus credenciales no viajan al proceso hijo.
+3. **El índice de encaje es determinista.** Se calcula con reglas que puedes leer: coincidencia de título, tus habilidades y el solapamiento con tu CV. Sin modelos de lenguaje, sin claves de API y sin coste por búsqueda.
+
 ## Estado y límites importantes
 
 - El dashboard solo muestra ofertas que realmente están guardadas en SQLite. No crea vacantes ficticias cuando la base está vacía.
@@ -35,6 +55,7 @@ JobScout Pro no envía tu CV ni tus búsquedas a ningún modelo de lenguaje. El 
 
 - solapamiento de vocabulario entre tu CV y el texto del anuncio;
 - coincidencia de títulos, incluidos alias profesionales («Hydrogeologist» ↔ «Groundwater Specialist»);
+- las habilidades que escribas en **Personalizar el ranking**, que viven solo en la memoria de tu sesión: no se escriben en disco, no llegan al rastreador y desaparecen al cerrar la pestaña;
 - una penalización conservadora cuando el anuncio pertenece a otro dominio profesional.
 
 Las mismas entradas producen siempre la misma puntuación, cada punto se puede explicar y no hay claves de API ni coste por búsqueda. La inteligencia artificial se usó como herramienta de desarrollo, no como dependencia en ejecución. Cualquier funcionalidad futura que quisiera enviar el CV a un proveedor externo tendría que venir con consentimiento explícito y con cambios en este documento y en [PRIVACY_REVIEW.md](PRIVACY_REVIEW.md); no forma parte de esta versión.
