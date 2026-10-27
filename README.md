@@ -29,6 +29,16 @@ Los filtros avanzados están desactivados por defecto. El usuario puede activar,
 
 Las tarjetas incluyen una lectura automática y explicable de las condiciones: salario publicado y periodo, años de experiencia detectados, nivel aproximado, tipo de contrato, modalidad y herramientas mencionadas. Si se carga un CV con consentimiento, se comparan los requisitos detectados con el texto disponible en la sesión. Esta extracción no es un LLM ni una predicción de contratación; muestra evidencia encontrada, no inventa datos que falten y puede pasar por alto formulaciones poco habituales. Los importes en monedas distintas del EUR no se convierten para el filtro salarial.
 
+## El motor de ranking no usa IA en tiempo de ejecución
+
+JobScout Pro no envía tu CV ni tus búsquedas a ningún modelo de lenguaje. El índice de encaje se calcula con un algoritmo determinista y auditable:
+
+- solapamiento de vocabulario entre tu CV y el texto del anuncio;
+- coincidencia de títulos, incluidos alias profesionales («Hydrogeologist» ↔ «Groundwater Specialist»);
+- una penalización conservadora cuando el anuncio pertenece a otro dominio profesional.
+
+Las mismas entradas producen siempre la misma puntuación, cada punto se puede explicar y no hay claves de API ni coste por búsqueda. La inteligencia artificial se usó como herramienta de desarrollo, no como dependencia en ejecución. Cualquier funcionalidad futura que quisiera enviar el CV a un proveedor externo tendría que venir con consentimiento explícito y con cambios en este documento y en [PRIVACY_REVIEW.md](PRIVACY_REVIEW.md); no forma parte de esta versión.
+
 ## Modos de búsqueda
 
 - **Rápida** (predeterminada en el dashboard): consulta una selección de fuentes y términos, limita la paginación, reduce los reintentos y no descarga cada descripción de LinkedIn por separado. Está pensada para obtener una primera lista con menos peticiones.
@@ -44,6 +54,15 @@ La búsqueda rápida prioriza **Freehire** y **Arbeitnow**, fuentes con respuest
 - Arbeitnow ofrece un feed de vacantes con enlaces a páginas de anuncio individuales; la aplicación filtra los resultados por puesto y ubicación.
 - La aplicación registra por fuente las consultas, anuncios recibidos, consultas vacías y errores. Si ninguna fuente devuelve ofertas utilizables, la búsqueda termina con advertencia y código de error: ya no se presenta un resultado vacío como si todo hubiera salido bien.
 - Los portales pueden limitar peticiones, cambiar sus páginas o retirar anuncios. La comprobación de URL confirma que el enlace es específico, pero no garantiza que el puesto siga abierto; comprueba la oferta antes de solicitarla.
+
+## Uso responsable y límites legales
+
+JobScout Pro es una herramienta **personal y educativa**, no un servicio comercial ni un producto ofrecido a terceros. Conviene tenerlo presente al compartirla:
+
+- **Freehire** publica su API de lectura gratuita para uso personal y no comercial. Este proyecto encaja en ese uso; convertirlo en un servicio para otras personas exigiría revisar su licencia y su plan de API.
+- **LinkedIn** e **Indeed** no autorizan el scraping en sus términos de servicio. La aplicación los consulta como fuentes de respaldo y esa elección es configurable: si publicas o compartes el proyecto, revisa antes esas condiciones y decide si los mantienes activos.
+- Respeta los límites de peticiones de cada portal y no uses la herramienta para recopilar datos a gran escala.
+- El índice de encaje es orientativo: no es una probabilidad de contratación ni un filtro automático de candidaturas.
 
 ## Instalación en Windows
 
