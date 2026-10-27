@@ -22,6 +22,7 @@ from job_scout.models import (
     Site,
 )
 from job_scout.scrapers import BaseScraper
+from job_scout.role_terms import role_search_variants
 
 log = logging.getLogger("job_scout.scrapers.freehire")
 API_URL = "https://freehire.me/api/v1/agent/jobs/search"
@@ -141,6 +142,20 @@ def parse_freehire_job(raw: dict) -> Job | None:
     )
 
 
+def _seniority_params(search_term: str) -> dict[str, str]:
+    """Only constrain seniority when the user explicitly asks for junior/intern roles."""
+    if re.search(
+        r"\b(intern(ship)?|junior|entry[\s-]?level|graduate|trainee|working student)\b",
+        str(search_term or ""),
+        flags=re.I,
+    ):
+        return {
+            "seniority": "intern,junior",
+            "seniority_include_unspecified": "true",
+        }
+    return {}
+
+
 def _validate_search_metadata(payload: dict, location: str) -> None:
     """Fail closed if Freehire silently ignores a requested geography filter."""
     meta = payload.get("meta") if isinstance(payload, dict) else {}
@@ -175,18 +190,21 @@ class FreehireScraper(BaseScraper):
     site = Site.FREEHIRE
 
     def scrape(self, params: ScrapeParams) -> list[Job]:
-        queries = [str(params.search_term or "").strip()]
-        # If the qualifier-heavy query is sparse, retry with the core role rather
-        # than returning no results solely because "intern"/"junior" is not indexed.
+        original_query = str(params.search_term or "").strip()
+        queries = role_search_variants(original_query)
+        # If the qualifier-heavy query is sparse, retry without seniority words.
+        # Role variants stay behind the exact query so we preserve user intent first.
         relaxed = re.sub(
             r"\b(intern(ship)?|junior|entry[\s-]?level|graduate|trainee|working student)\b",
             "",
-            queries[0],
+            original_query,
             flags=re.I,
         )
         relaxed = re.sub(r"\s+", " ", relaxed).strip()
-        if relaxed and relaxed.casefold() != queries[0].casefold():
-            queries.append(relaxed)
+        if relaxed and relaxed.casefold() != original_query.casefold():
+            for variant in role_search_variants(relaxed):
+                if variant.casefold() not in {query.casefold() for query in queries}:
+                    queries.append(variant)
 
         jobs: list[Job] = []
         seen: set[str] = set()
@@ -208,10 +226,9 @@ class FreehireScraper(BaseScraper):
                 elif any(token in location_text for token in ("spain", "españa", "madrid")):
                     api_params["countries"] = "ES"
 
-                # Preserve junior opportunities with no inferred seniority. A strict
-                # internship-only filter would drop postings whose level is unstated.
-                api_params["seniority"] = "intern,junior"
-                api_params["seniority_include_unspecified"] = "true"
+                # Do not impose an entry-level filter on a general job search.
+                # Restrict seniority only when the query explicitly asks for it.
+                api_params.update(_seniority_params(original_query))
                 response = client.get(API_URL, params=api_params)
                 if response.status_code == 429:
                     raise RuntimeError("Freehire API limit reached (HTTP 429); try again later.")
@@ -233,8 +250,9 @@ class FreehireScraper(BaseScraper):
                         break
                 if len(jobs) >= params.results_wanted:
                     break
-                # A relaxed second query is only useful if the first query was sparse.
-                if query == queries[0] and len(jobs) >= max(5, params.results_wanted // 2):
+                # Stop once a useful list is available, regardless of which
+                # exact/expanded query supplied the matches.
+                if len(jobs) >= max(5, params.results_wanted // 2):
                     break
 
         log.info(

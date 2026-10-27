@@ -12,6 +12,7 @@ import httpx
 
 from job_scout.models import Job, JobType, Location, ScrapeParams, Site
 from job_scout.scrapers import BaseScraper
+from job_scout.role_terms import role_matches_text
 from job_scout.util import html_to_text
 
 log = logging.getLogger("job_scout.scrapers.arbeitnow")
@@ -94,7 +95,10 @@ def _matches_term(row: dict, search_term: str) -> bool:
     if not tokens:
         return True
     joined = f"{title} {tag_text}"
-    return any(re.search(r"(?<!\w)" + re.escape(token) + r"(?!\w)", joined) for token in tokens)
+    # Recognise common geology/hydrogeology aliases and compound titles.
+    if role_matches_text(search_term, joined):
+        return True
+    return any(re.search(r"(?<!\\w)" + re.escape(token) + r"(?!\\w)", joined) for token in tokens)
 
 
 def _job_types(values: object) -> list[JobType]:

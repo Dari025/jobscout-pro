@@ -7,8 +7,13 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from job_scout.models import JobType, Site
-from job_scout.scrapers.arbeitnow import parse_arbeitnow_job
-from job_scout.scrapers.freehire import _validate_search_metadata, parse_freehire_job
+from job_scout.scrapers.arbeitnow import _matches_term, parse_arbeitnow_job
+from job_scout.scrapers.freehire import (
+    _seniority_params,
+    _validate_search_metadata,
+    parse_freehire_job,
+)
+from job_scout.role_terms import role_matches_text, role_search_variants
 from job_scout.scrapers.indeed import IndeedScraper
 from job_scout.config import ScrapingConfig
 
@@ -150,3 +155,41 @@ def test_freehire_fails_closed_when_remote_region_filter_is_ignored():
 def test_freehire_warns_but_allows_non_geographic_ignored_params():
     payload = {"meta": {"ignored_params": ["seniority_include_unspecified"]}}
     _validate_search_metadata(payload, "Madrid, Spain")
+
+
+
+def test_freehire_does_not_force_junior_seniority_for_general_searches():
+    assert _seniority_params("Hydrogeologist") == {}
+    assert _seniority_params("Geologist") == {}
+    assert _seniority_params("Senior Geologist") == {}
+
+
+def test_freehire_only_filters_seniority_when_the_user_requests_it():
+    assert _seniority_params("Junior Geologist") == {
+        "seniority": "intern,junior",
+        "seniority_include_unspecified": "true",
+    }
+    assert _seniority_params("Data Analyst Internship")["seniority"] == "intern,junior"
+
+
+def test_geoscience_search_variants_include_related_role_terms():
+    hydro = {term.casefold() for term in role_search_variants("Hydrogeologist")}
+    geology = {term.casefold() for term in role_search_variants("Geologist")}
+    assert {"hydrogeology", "groundwater", "geologist"} <= hydro
+    assert {"geology", "geoscientist", "engineering geologist", "hydrogeologist"} <= geology
+
+
+def test_geologist_search_matches_compound_hydrogeologist_title():
+    assert role_matches_text("geologist", "Senior Hydrogeologist")
+    assert _matches_term(
+        {"title": "Hydrogeologist", "tags": []},
+        "geologist",
+    )
+
+
+def test_hydrogeologist_search_matches_groundwater_role_title():
+    assert role_matches_text("hydrogeologist", "Groundwater Specialist")
+    assert _matches_term(
+        {"title": "Groundwater Specialist", "tags": []},
+        "hydrogeologist",
+    )
