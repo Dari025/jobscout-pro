@@ -88,34 +88,15 @@ Los filtros son acumulables: puesto/palabra clave, fecha de publicación, releva
 
 El modo sin CV sigue disponible: basta con indicar uno o varios puestos y una ubicación. El CV es opcional y solo se usa para el análisis de relevancia en la sesión actual.
 
-## Resumen y alertas al móvil, por Telegram o por correo
+## Compartir el Top 10 sin configurar servicios
 
-**La opción más sencilla es ntfy**, que permite recibir avisos en el móvil sin crear un bot ni configurar correo. En la pestaña **Alertas**, copia el canal aleatorio que genera JobScout Pro y suscríbete a ese mismo nombre desde la aplicación ntfy, usando el servidor `https://ntfy.sh`. Trata el nombre como una clave compartida: no lo publiques y guárdalo para reutilizarlo. La guía completa está en [GUIA_ALERTAS.md](GUIA_ALERTAS.md).
+En la pestaña **Alertas**, JobScout muestra el Top 10 y un botón **Compartir Top 10**. En los navegadores que admiten el menú nativo de compartir, puedes elegir una aplicación que ya uses, como correo o mensajería. No necesitas crear una cuenta, configurar un bot ni introducir contraseñas en JobScout. Tú confirmas el envío desde la aplicación elegida.
 
-JobScout prepara un Top 10 de las ofertas que pasan los filtros activos, ordenadas por relevancia, con salario, modalidad, contrato, experiencia, enlaces, pros y puntos que conviene confirmar. **La información no publicada se marca como «No indicado» y las ofertas se conservan por defecto**; un dato desconocido solo las excluye cuando activas expresamente el filtro correspondiente.
+Si el navegador no admite ese menú, el botón intentará **copiar el resumen automáticamente** para que solo tengas que pegarlo en tu correo o mensajería. Si el navegador también bloquea el portapapeles, pulsa **Descargar resumen completo (.txt)**. Incluye puestos, empresas, puntuación orientativa, condiciones conocidas, pros, puntos que conviene comprobar y enlaces a los anuncios originales.
 
-Puedes publicar el resumen manualmente en ntfy o enviarlo por Telegram/correo si tienes esas integraciones configuradas. También puedes activar el envío automático al terminar una búsqueda lanzada por ti, mientras la app está abierta. Para ntfy hay una casilla adicional de activación. **Esto no es un servicio diario 24/7 ni funciona cuando la app está cerrada.**
+La app no envía mensajes por su cuenta ni programa avisos en segundo plano: compartir es una acción manual y explícita. Un envío automático de correo necesitaría credenciales de envío o un servicio externo; para conservar una experiencia sencilla no se pide configurar nada de eso.
 
-### Configuración avanzada
-
-En local puedes crear `.streamlit/secrets.toml` (está incluido en `.gitignore`) o usar variables de entorno. En el despliegue de Streamlit, las mismas claves se añaden en la sección Secrets:
-
-```toml
-# Opcional: conserva el mismo canal ntfy entre sesiones
-NTFY_TOPIC = "elige-un-canal-largo-y-aleatorio"
-
-TELEGRAM_BOT_TOKEN = "token-del-bot"
-TELEGRAM_CHAT_ID = "123456789"
-
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-SMTP_USER = "tu-cuenta@gmail.com"
-SMTP_PASSWORD = "contraseña-de-aplicación"
-SMTP_FROM = "tu-cuenta@gmail.com"
-SMTP_TO = "destino@gmail.com"
-```
-
-No necesitas configurar `NTFY_TOPIC` para probar ntfy: la app genera uno por sesión. Para reutilizarlo entre sesiones, guarda el nombre o fija un canal propio, largo y aleatorio en Secrets. Para Gmail normalmente necesitarás una contraseña de aplicación; no uses la contraseña habitual de tu cuenta. Nunca subas credenciales ni `secrets.toml` al repositorio.
+**Importante:** los campos que el anuncio no publica aparecen como «No indicado» y la oferta se conserva por defecto. Solo se excluye un campo desconocido si el usuario activa expresamente el ajuste correspondiente.
 
 ## Pruebas
 

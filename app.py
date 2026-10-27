@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import os
 import queue
 import re
-import secrets as py_secrets
 import subprocess
 import sys
 import threading
@@ -17,6 +17,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 SRC_DIR = Path(__file__).resolve().parent / "src"
 if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
@@ -50,15 +51,11 @@ from job_scout.job_analysis import (
     job_matches_optional_filters,
 )
 from job_scout.notifications import (
-    NotificationError,
     build_top_jobs_digest,
     render_digest_text,
-    send_email_digest,
-    send_ntfy_digest,
-    send_telegram_digest,
 )
 
-APP_BUILD = "2026.10.27-filters-alert-digests-v5-ntfy"
+APP_BUILD = "2026.10.27-filters-alert-digests-v6-simple-share"
 
 
 st.set_page_config(
@@ -156,7 +153,7 @@ config, config_path = load_config(template_path)
 
 # Reset state created by older app builds once, so a browser tab cannot retain
 # an old profile, CV, target title, saved list, or old search result state.
-SESSION_SCHEMA = "clean-isolated-workspaces-v4-filters-digests"
+SESSION_SCHEMA = "clean-isolated-workspaces-v5-simple-share"
 if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
     for stale_key in (
         "cv_text", "saved_jobs", "refresh_key", "target_title", "last_scrape",
@@ -173,8 +170,9 @@ if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
         "salary_maximum_eur", "duration_filter_enabled", "duration_filter_values",
         "include_unknown_duration", "hours_filter_enabled", "maximum_hours_weekly",
         "include_unknown_hours", "published_window_clean", "include_unknown_published_date",
-        "notify_auto_enabled", "notification_telegram_chat_id",
-        "notification_email_recipient", "notify_pending_search_id", "notify_auto_sent_id",
+        "notify_auto_enabled", "notify_ntfy_enabled", "notification_ntfy_topic",
+        "notification_telegram_chat_id", "notification_email_recipient",
+        "notify_pending_search_id", "notify_auto_sent_id",
     ):
         st.session_state.pop(stale_key, None)
     for stale_upload_key in [
@@ -344,17 +342,6 @@ def _handle_cv_consent_change() -> None:
         ) + 1
         _purge_uploaded_cv_widget_state()
         st.session_state["cv_removed_notice"] = True
-
-
-def _configured_secret(name: str, default: str = "") -> str:
-    """Read notification credentials from environment or Streamlit secrets only."""
-    value = str(os.environ.get(name, "") or "").strip()
-    if value:
-        return value
-    try:
-        return str(st.secrets.get(name, default) or default).strip()
-    except Exception:
-        return str(default or "").strip()
 
 
 with st.sidebar:
@@ -830,187 +817,83 @@ with tab_alerts:
         st.info("Todavía no hay ofertas que coincidan con los filtros. Lanza una búsqueda o amplía algún filtro para generar el Top 10.")
 
     st.divider()
-    st.markdown("### Avisos al móvil sin configurar bots ni correo")
+    st.markdown("### Compartir el Top 10")
     st.caption(
-        "La opción más directa es ntfy: no requiere cuenta, token de bot ni contraseña SMTP. "
-        "Solo tienes que suscribirte al mismo canal desde la app ntfy del móvil."
+        "Sin cuentas nuevas, bots ni contraseñas. Pulsa compartir y elige una aplicación que ya uses. "
+        "Si el menú no funciona, el resumen se copiará para que lo pegues en tu correo o mensajería."
     )
-    if "notification_ntfy_topic" not in st.session_state:
-        st.session_state["notification_ntfy_topic"] = (
-            _configured_secret("NTFY_TOPIC") or py_secrets.token_urlsafe(24)
+    if digest_entries:
+        share_text = render_digest_text(digest_entries)
+        share_text_json = (
+            json.dumps(share_text, ensure_ascii=False)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
         )
-    ntfy_topic = st.text_input(
-        "Canal ntfy (usa el mismo nombre en el móvil)",
-        key="notification_ntfy_topic",
-        help="Se genera un canal aleatorio para empezar. Guarda el nombre y reutilízalo en futuras sesiones.",
-    ).strip()
-    ntfy_ready = bool(re.fullmatch(r"[A-Za-z0-9_-]{20,64}", ntfy_topic))
+        share_html = f"""
+        <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#eef4ff;">
+          <button id="jobscout-share" type="button" aria-label="Compartir las diez mejores ofertas"
+            style="width:100%;min-height:48px;border:0;border-radius:12px;padding:12px 16px;
+            background:linear-gradient(100deg,#67e8f9,#818cf8);color:#07111d;
+            font-size:16px;font-weight:750;cursor:pointer;">
+            Compartir Top 10
+          </button>
+          <p id="jobscout-share-status" role="status" aria-live="polite"
+            style="margin:8px 2px 0;color:#aab8cf;font-size:13px;line-height:1.45;">
+            Se abrirá el menú de compartir de tu dispositivo, si el navegador lo admite.
+          </p>
+          <style>
+            #jobscout-share:focus-visible {{ outline:3px solid #fff08a; outline-offset:3px; }}
+            #jobscout-share:disabled {{ opacity:.65; cursor:wait; }}
+          </style>
+          <script>
+            const digestText = {share_text_json};
+            const shareButton = document.getElementById("jobscout-share");
+            const shareStatus = document.getElementById("jobscout-share-status");
+            shareButton.addEventListener("click", async () => {{
+              const copyDigest = async () => {{
+                try {{
+                  await navigator.clipboard.writeText(digestText);
+                  shareStatus.textContent = "Resumen copiado. Abre tu correo o mensajería y pégalo en el mensaje.";
+                }} catch (copyError) {{
+                  shareStatus.textContent = "No se pudo compartir ni copiar. Usa la descarga de texto que aparece debajo.";
+                }}
+              }};
+              shareButton.disabled = true;
+              try {{
+                if (!navigator.share) {{
+                  await copyDigest();
+                  return;
+                }}
+                await navigator.share({{ title: "JobScout Pro · Top 10", text: digestText }});
+                shareStatus.textContent = "Se ha abierto el menú de compartir.";
+              }} catch (error) {{
+                if (error && error.name !== "AbortError") {{
+                  await copyDigest();
+                }}
+              }} finally {{
+                shareButton.disabled = false;
+              }}
+            }});
+          </script>
+        </div>
+        """
+        components.html(share_html, height=106, scrolling=False)
+        st.download_button(
+            "Descargar resumen completo (.txt)",
+            data=share_text,
+            file_name="jobscout-top10.txt",
+            mime="text/plain; charset=utf-8",
+            use_container_width=True,
+            help="Último recurso si el navegador no permite ni compartir ni copiar. Incluye el Top 10, pros, puntos a revisar y enlaces.",
+        )
+    else:
+        st.info("Haz una búsqueda para generar el Top 10 que quieras compartir.")
+
     st.caption(
-        "Configuración en el móvil: instala ntfy, añade una suscripción al servidor https://ntfy.sh "
-        "y pega exactamente el canal que aparece aquí. Guarda el canal para reutilizarlo."
+        "Nota: compartir es manual. Para enviar correos automáticamente sin que tú confirmes el envío, "
+        "la aplicación necesitaría credenciales o un servicio de envío; no hace falta nada de eso para compartir ahora."
     )
-    st.caption(
-        "Privacidad: el nombre del canal funciona como una clave compartida. Usa uno largo y aleatorio, "
-        "no lo publiques y no incluyas datos personales en él. El resumen se envía al servicio ntfy.sh."
-    )
-    if "notification_telegram_chat_id" not in st.session_state:
-        st.session_state["notification_telegram_chat_id"] = _configured_secret("TELEGRAM_CHAT_ID")
-    if "notification_email_recipient" not in st.session_state:
-        st.session_state["notification_email_recipient"] = _configured_secret("SMTP_TO")
-    dest_col1, dest_col2 = st.columns(2)
-    with dest_col1:
-        telegram_chat_id = st.text_input(
-            "Chat ID de Telegram (opcional)", key="notification_telegram_chat_id",
-            placeholder="Ej. 123456789",
-            help="Solo es necesario si ya tienes un bot de Telegram configurado.",
-        )
-    with dest_col2:
-        email_recipient = st.text_input(
-            "Correo de destino (opcional)", key="notification_email_recipient",
-            placeholder="tu@correo.com",
-        )
-
-    telegram_token = _configured_secret("TELEGRAM_BOT_TOKEN")
-    smtp_host = _configured_secret("SMTP_HOST")
-    try:
-        smtp_port = int(_configured_secret("SMTP_PORT", "587") or "587")
-        if not 1 <= smtp_port <= 65535:
-            smtp_port = 587
-    except ValueError:
-        smtp_port = 587
-    smtp_user = _configured_secret("SMTP_USER")
-    smtp_password = _configured_secret("SMTP_PASSWORD")
-    smtp_sender = _configured_secret("SMTP_FROM", smtp_user)
-    telegram_ready = bool(telegram_token and telegram_chat_id.strip())
-    email_ready = bool(smtp_host and smtp_user and smtp_password and smtp_sender and email_recipient.strip())
-
-    readiness_col1, readiness_col2, readiness_col3 = st.columns(3)
-    with readiness_col1:
-        if ntfy_ready:
-            st.success("Canal ntfy válido; falta suscribirse en el móvil si aún no lo has hecho")
-        else:
-            st.warning("El canal ntfy debe tener entre 20 y 64 caracteres")
-    with readiness_col2:
-        if telegram_ready:
-            st.success("Telegram configurado")
-        elif telegram_token:
-            st.info("Falta el chat ID de Telegram")
-        else:
-            st.info("Telegram pendiente de configurar")
-    with readiness_col3:
-        if email_ready:
-            st.success("Correo configurado")
-        else:
-            st.info("Correo pendiente de configurar")
-
-    send_ntfy_col, send_telegram_col, send_email_col = st.columns(3)
-    with send_ntfy_col:
-        if st.button("📲 Enviar Top 10 al móvil", key="send_digest_ntfy", use_container_width=True, disabled=not digest_entries or not ntfy_ready):
-            try:
-                message_count = send_ntfy_digest(digest_entries, ntfy_topic)
-                st.success(
-                    f"Resumen publicado en ntfy ({message_count} aviso(s)). "
-                    "La recepción móvil requiere una suscripción a ese canal."
-                )
-            except NotificationError as exc:
-                st.error(str(exc))
-    with send_telegram_col:
-        if st.button("✈ Enviar Top 10 por Telegram", key="send_digest_telegram", use_container_width=True, disabled=not digest_entries):
-            try:
-                message_count = send_telegram_digest(digest_entries, telegram_token, telegram_chat_id)
-                st.success(f"Top 10 enviado a Telegram ({message_count} mensaje(s)).")
-            except NotificationError as exc:
-                st.error(str(exc))
-    with send_email_col:
-        if st.button("✉ Enviar Top 10 por correo", key="send_digest_email", use_container_width=True, disabled=not digest_entries):
-            try:
-                send_email_digest(
-                    digest_entries,
-                    smtp_host=smtp_host,
-                    smtp_port=smtp_port,
-                    smtp_username=smtp_user,
-                    smtp_password=smtp_password,
-                    sender=smtp_sender,
-                    recipient=email_recipient,
-                )
-                st.success(f"Top 10 enviado a {email_recipient}.")
-            except NotificationError as exc:
-                st.error(str(exc))
-
-    st.checkbox(
-        "Enviar avisos al móvil por ntfy automáticamente después de cada búsqueda",
-        key="notify_ntfy_enabled",
-        help="Actívalo solo después de suscribirte al canal desde la app ntfy de tu móvil.",
-    )
-    st.checkbox(
-        "Enviar automáticamente el Top 10 al terminar cada búsqueda correcta",
-        key="notify_auto_enabled",
-        help="Solo se ejecuta tras una búsqueda que inicies tú mientras la app está abierta. Envía por ntfy si lo activas aquí, y por los canales de Telegram/correo que estén configurados.",
-    )
-    pending_id = str(st.session_state.get("notify_pending_search_id", "") or "")
-    sent_id = str(st.session_state.get("notify_auto_sent_id", "") or "")
-    if pending_id and pending_id != sent_id:
-        auto_sent = []
-        auto_errors = []
-        if digest_entries and ntfy_ready and bool(st.session_state.get("notify_ntfy_enabled", False)):
-            try:
-                send_ntfy_digest(digest_entries, ntfy_topic)
-                auto_sent.append("ntfy móvil")
-            except NotificationError as exc:
-                auto_errors.append("ntfy móvil: " + str(exc))
-        if digest_entries and telegram_ready:
-            try:
-                send_telegram_digest(digest_entries, telegram_token, telegram_chat_id)
-                auto_sent.append("Telegram")
-            except NotificationError as exc:
-                auto_errors.append("Telegram: " + str(exc))
-        if digest_entries and email_ready:
-            try:
-                send_email_digest(
-                    digest_entries,
-                    smtp_host=smtp_host,
-                    smtp_port=smtp_port,
-                    smtp_username=smtp_user,
-                    smtp_password=smtp_password,
-                    sender=smtp_sender,
-                    recipient=email_recipient,
-                )
-                auto_sent.append("correo")
-            except NotificationError as exc:
-                auto_errors.append("correo: " + str(exc))
-        st.session_state["notify_auto_sent_id"] = pending_id
-        st.session_state.pop("notify_pending_search_id", None)
-        if auto_sent:
-            st.success("Envío automático completado: " + " y ".join(auto_sent) + ".")
-        if auto_errors:
-            st.warning("La búsqueda terminó, pero hubo incidencias en el envío: " + " · ".join(auto_errors))
-        if not auto_sent and not auto_errors:
-            st.info("No se ha enviado ninguna alerta: configura al menos un destino y vuelve a lanzar una búsqueda.")
-
-    with st.expander("Configuración avanzada: ntfy persistente, Telegram y correo"):
-        st.markdown(
-            "Añade estos valores al archivo .streamlit/secrets.toml en local o a la sección Secrets del despliegue. "
-            "También puedes usar variables de entorno con los mismos nombres. No compartas este archivo ni lo subas a GitHub."
-        )
-        st.code(
-            '# Opcional: fija el mismo canal ntfy entre sesiones\n'
-            '# NTFY_TOPIC = "elige-un-canal-largo-y-aleatorio"\n'
-            'TELEGRAM_BOT_TOKEN = "token-del-bot"\n'
-            'TELEGRAM_CHAT_ID = "123456789"\n'
-            'SMTP_HOST = "smtp.gmail.com"\n'
-            'SMTP_PORT = 587\n'
-            'SMTP_USER = "tu-cuenta@gmail.com"\n'
-            'SMTP_PASSWORD = "contraseña-de-aplicación"\n'
-            'SMTP_FROM = "tu-cuenta@gmail.com"\n'
-            'SMTP_TO = "tu-destino@gmail.com"',
-            language="toml",
-        )
-        st.caption(
-            "ntfy no necesita clave: suscríbete en el móvil al mismo canal. Si no fijas NTFY_TOPIC en Secrets, "
-            "el canal aleatorio se crea por sesión; guarda el nombre y vuelve a introducirlo si abres una sesión nueva. "
-            "Para Gmail suele hacer falta una contraseña de aplicación. Telegram requiere un bot y su chat ID. "
-            "No se envía ningún mensaje automáticamente salvo que actives esa opción."
-        )
 
 with tab_discover:
     left, right = st.columns([3, 1])

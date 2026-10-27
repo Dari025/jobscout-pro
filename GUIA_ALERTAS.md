@@ -1,94 +1,33 @@
-# Alertas de JobScout Pro: la forma más sencilla
+# Compartir ofertas desde JobScout Pro
 
-La opción recomendada es **ntfy para recibir avisos en el móvil**. No necesita cuenta, token, bot ni configuración SMTP. Telegram y correo siguen disponibles como alternativas, pero requieren una configuración adicional.
+JobScout Pro permite compartir el Top 10 sin configurar correo SMTP, crear un bot ni instalar otra herramienta para enviar el resumen desde JobScout.
 
-## Opción recomendada: notificaciones en el móvil con ntfy
+## Compartir el Top 10
 
-### 1. Copia el canal que muestra JobScout Pro
-1. Abre la pestaña **Alertas** de JobScout Pro.
-2. En **Avisos al móvil**, copia el nombre del canal que aparece en el campo «Canal ntfy».
-3. No lo publiques ni lo uses como nombre de usuario. Es un canal compartido: quien lo conozca puede publicar o suscribirse.
+1. Abre JobScout Pro y realiza una búsqueda de ofertas.
+2. Entra en la pestaña **Alertas** y revisa el Top 10.
+3. Pulsa **Compartir Top 10**.
+4. Elige una aplicación que ya tengas disponible en el menú de compartir del dispositivo, por ejemplo tu correo o una aplicación de mensajería.
+5. Revisa el mensaje y pulsa Enviar dentro de esa aplicación.
 
-La aplicación genera un canal largo y aleatorio al empezar la sesión. **Guárdalo**. Si abres una sesión nueva y no configuraste `NTFY_TOPIC`, pega otra vez tu canal guardado en el campo. También puedes fijar un canal permanente en Secrets, como se explica más abajo.
+No tienes que introducir contraseñas de correo ni copiar tokens a JobScout. La aplicación de destino puede pedirte que confirmes el envío, como de costumbre.
 
-### 2. Suscríbete desde el móvil
-1. Instala la aplicación oficial **ntfy** en el móvil desde la tienda de aplicaciones.
-2. Añade una suscripción usando el servidor `https://ntfy.sh`.
-3. Escribe exactamente el mismo canal que copiaste de JobScout Pro y guarda la suscripción.
-4. Asegúrate de que las notificaciones de ntfy estén permitidas en los ajustes del móvil.
+## Si no aparece el menú Compartir
 
-### 3. Envía el Top 10
-1. Lanza una búsqueda de ofertas y espera a que aparezcan resultados.
-2. En la pestaña **Alertas**, pulsa **Enviar Top 10 al móvil**.
-3. Deberías recibir una o varias notificaciones en el móvil. El resumen puede dividirse en varios mensajes para no sobrepasar los límites del servicio.
+Algunos navegadores no admiten el menú nativo de compartir desde una aplicación web incrustada. El botón intentará copiar automáticamente el resumen al portapapeles; después, abre tu correo o mensajería y pega el texto en el mensaje.
 
-Para que JobScout envíe el resumen tras futuras búsquedas, activa **Enviar avisos al móvil por ntfy automáticamente después de cada búsqueda** y, además, **Enviar automáticamente el Top 10 al terminar cada búsqueda correcta**.
+Si el navegador también bloquea la copia, pulsa **Descargar resumen completo (.txt)**, abre el archivo y copia su contenido o adjúntalo al mensaje.
 
-**Importante:** el envío automático solo se produce cuando tú lanzas una búsqueda mientras la app está abierta. No es un envío diario en segundo plano. ntfy.sh es un servicio público; el resumen de ofertas se transmite a ese servicio, así que no incluyas datos personales o confidenciales en el canal.
+El resumen incluye hasta diez ofertas ordenadas por relevancia, las condiciones detectadas, pros, puntos que conviene revisar y los enlaces disponibles a los anuncios.
 
-## Mantener el mismo canal entre sesiones (opcional)
+## Qué no hace
 
-Si puedes editar los secretos del despliegue, define un canal privado largo y aleatorio como `NTFY_TOPIC`. Añádelo en `.streamlit/secrets.toml` en local o en la sección Secrets del alojamiento:
+- No envía un correo automáticamente ni conserva credenciales de tu cuenta.
+- No ejecuta una tarea programada cuando cierras la aplicación.
+- No requiere una suscripción, una cuenta o un bot para compartir manualmente.
 
-```toml
-NTFY_TOPIC = "elige-un-canal-largo-y-aleatorio"
-```
+El envío automático de correos requeriría un servicio de envío o credenciales técnicas. No se oculta esa limitación: el flujo sencillo es compartir el resumen cuando terminas la búsqueda.
 
-No uses el ejemplo literal. Utiliza una cadena aleatoria, guárdala en un lugar privado y suscríbete a ese mismo nombre en ntfy. También puedes introducir manualmente tu canal guardado en la pestaña Alertas en cada sesión.
+## Cómo se tratan los datos que faltan
 
-## Alternativa: Telegram
-
-Telegram necesita un bot y un chat ID:
-
-1. En Telegram, abre la cuenta oficial **@BotFather** y envía `/newbot`.
-2. Guarda el token que te entrega. Trátalo como una contraseña; no lo compartas ni lo subas a GitHub.
-3. Abre el chat de tu bot y pulsa **Iniciar** o envía `/start`.
-4. Obtén tu chat ID de forma local. En PowerShell, guarda el token temporalmente en la sesión y ejecuta:
-
-```powershell
-$env:TELEGRAM_BOT_TOKEN = "PEGA_AQUI_TU_TOKEN"
-Invoke-RestMethod "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/getUpdates" |
-  ConvertTo-Json -Depth 10
-```
-
-Busca el campo `chat.id` del mensaje que acabas de enviar. No compartas la salida: puede incluir datos del chat. Guarda token y chat ID en Secrets:
-
-```toml
-TELEGRAM_BOT_TOKEN = "TU_TOKEN"
-TELEGRAM_CHAT_ID = "TU_CHAT_ID"
-```
-
-En JobScout, pulsa **Enviar Top 10 por Telegram**.
-
-## Alternativa: correo electrónico
-
-El correo necesita un servidor SMTP y credenciales. Para Gmail, suele requerirse una contraseña de aplicación en lugar de la contraseña habitual de la cuenta. Añade estos valores a `.streamlit/secrets.toml` o a los Secrets del despliegue:
-
-```toml
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-SMTP_USER = "tu-cuenta@gmail.com"
-SMTP_PASSWORD = "CONTRASENA_DE_APLICACION"
-SMTP_FROM = "tu-cuenta@gmail.com"
-SMTP_TO = "tu-destino@gmail.com"
-```
-
-En la pestaña Alertas, escribe el destinatario y pulsa **Enviar Top 10 por correo**. No publiques ni compartas las credenciales.
-
-## Qué contiene el resumen
-
-- Hasta 10 ofertas con mayor puntuación entre las que pasan los filtros activos.
-- Empresa, puesto, ubicación, relevancia y enlaces disponibles.
-- Pros basados en la información localizada en el anuncio.
-- Condiciones que conviene confirmar, como salario, horas, modalidad o duración.
-
-**Un dato desconocido no elimina una oferta por defecto.** Se señala como «No indicado» y solo se excluye si activas explícitamente la opción de descartar ofertas con ese dato desconocido. La puntuación es orientativa; no representa la probabilidad de contratación.
-
-## Solución de problemas
-
-- **No llega el aviso de ntfy:** comprueba que el canal coincide exactamente en JobScout y en el móvil, que la suscripción usa `https://ntfy.sh` y que las notificaciones de ntfy están permitidas.
-- **Cambió el canal al abrir otra sesión:** vuelve a introducir el nombre que guardaste o fija `NTFY_TOPIC` en Secrets.
-- **Telegram no envía:** comprueba el token, el chat ID y que hayas pulsado `/start` en el bot.
-- **Correo no enviado:** revisa host, puerto, usuario y contraseña de aplicación.
-- **No hay ofertas:** ejecuta primero una búsqueda correcta; el resumen nunca inventa vacantes.
-
+Los datos no publicados —por ejemplo salario, horario, duración o modalidad— se muestran como **«No indicado»**. La oferta no se descarta por tener campos desconocidos, salvo que actives explícitamente un filtro para excluirlos. La puntuación ordena oportunidades, pero no es una probabilidad de contratación.

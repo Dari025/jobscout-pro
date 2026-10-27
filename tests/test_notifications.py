@@ -13,7 +13,6 @@ from job_scout.notifications import (
     render_digest_text,
     render_email_html,
     send_email_digest,
-    send_ntfy_digest,
     send_telegram_digest,
 )
 
@@ -118,71 +117,6 @@ def test_telegram_sends_chunks_and_does_not_leak_token(monkeypatch):
     assert count >= 1
     assert all("/botfake-test-token/" in item[0] for item in calls)
     assert all(len(item[1]["text"]) <= notifications.TELEGRAM_MESSAGE_LIMIT for item in calls)
-
-
-def test_ntfy_requires_a_long_private_topic():
-    try:
-        send_ntfy_digest(build_top_jobs_digest(sample_jobs()), "short")
-    except NotificationError as exc:
-        assert "canal ntfy" in str(exc).lower()
-    else:
-        raise AssertionError("expected an invalid ntfy topic to fail")
-
-
-
-def test_ntfy_rejects_empty_digest():
-    try:
-        send_ntfy_digest([], "jobscout-private-channel-742")
-    except NotificationError as exc:
-        assert "ofertas" in str(exc).lower()
-    else:
-        raise AssertionError("expected an empty digest to fail")
-
-
-def test_ntfy_publishes_digest_in_bounded_chunks_without_credentials(monkeypatch):
-    observed = []
-
-    class Response:
-        def raise_for_status(self):
-            pass
-
-    def fake_post(url, data, headers, timeout):
-        observed.append({
-            "url": url,
-            "text": data.decode("utf-8"),
-            "headers": headers,
-            "timeout": timeout,
-        })
-        return Response()
-
-    monkeypatch.setattr(notifications.requests, "post", fake_post)
-    topic = "jobscout-private-channel-742"
-    entries = [
-        {
-            "rank": i,
-            "title": f"Data Analyst {i}",
-            "company": "Example Co",
-            "score": 90 - i,
-            "location": "Madrid",
-            "salary": "No indicado",
-            "contract": "No indicado",
-            "experience": "No indicado",
-            "work_mode": "No indicado",
-            "pros": ["Perfil orientado a datos " + ("é" * 650)],
-            "cons": ["Salario no indicado " + ("ñ" * 650)],
-            "job_url": f"https://example.com/jobs/{i}",
-            "apply_url": "",
-        }
-        for i in range(1, 11)
-    ]
-    count = send_ntfy_digest(entries, topic, timeout=3.0)
-
-    assert count == len(observed)
-    assert len(observed) > 1
-    assert all(item["url"] == f"https://ntfy.sh/{topic}" for item in observed)
-    assert all(len(item["text"].encode("utf-8")) <= notifications.NTFY_MESSAGE_LIMIT for item in observed)
-    assert all(item["headers"]["Title"].startswith("JobScout Pro Top 10") for item in observed)
-    assert "Salario: No indicado" in "\n".join(item["text"] for item in observed)
 
 
 def test_email_requires_all_credentials():
