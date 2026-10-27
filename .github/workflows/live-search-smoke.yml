@@ -30,9 +30,11 @@ jobs:
           python-version: "3.12"
       - name: Install project dependencies
         run: pip install -r requirements.txt
+      # These steps fail the job on purpose: detecting a broken public source is
+      # the whole point of this workflow. It is not part of the pull-request
+      # gate (it only runs on `main` pushes touching search code, or manually),
+      # so a red run is an alert to investigate, not a blocker.
       - name: Probe live public search APIs and exact posting URLs
         run: python scripts/smoke_search_sources.py
-        continue-on-error: true
       - name: Run the real CLI and verify dashboard SQLite reader sees saved jobs
         run: python scripts/smoke_cli_end_to_end.py
-        continue-on-error: true

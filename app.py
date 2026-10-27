@@ -87,7 +87,7 @@ st.markdown(
     .hero-chip { display:inline-block; padding:7px 11px; border-radius:99px; border:1px solid #405477; color:#cbd8ef; font-size:.75rem; font-weight:700; margin-top:14px; background:rgba(9,17,31,.4); }
     [data-testid="stMetric"] { background:linear-gradient(145deg,rgba(18,29,48,.92),rgba(13,22,37,.92)); padding:17px 19px; border:1px solid #263752; border-radius:16px; }
     [data-testid="stMetricLabel"] { color:#aab8cf !important; font-weight:600; }
-    [data-testid="stMetricValue"] { color:#f2f7ff !important; font-family:'Manrope',sans-serif; }
+    [data-testid="stMetricValue"] { color:#f2f7ff !important; font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; }
     [data-testid="stVerticalBlockBorderWrapper"] { border-color:#263752 !important; border-radius:18px !important; background:rgba(15,25,42,.78); }
     .stButton > button, .stLinkButton > a { border-radius:11px; font-weight:700; transition:all .18s ease; }
     .stButton > button[kind="primary"] { background:linear-gradient(100deg,#67e8f9,#818cf8); color:#07111d; border:0; }
@@ -192,7 +192,6 @@ st.session_state.setdefault("target_title_clean", "")
 st.session_state.setdefault("search_locations_clean", [])
 st.session_state.setdefault("last_scrape", None)
 st.session_state.setdefault("cv_fingerprint", "")
-st.session_state.setdefault("cv_uploader_version", 0)
 st.session_state.setdefault("cv_uploader_version", 0)
 
 # Each Streamlit browser session gets its own unguessable workspace and SQLite DB.
@@ -628,9 +627,7 @@ if st.session_state.pop("scrape_requested", False):
         st.error(f"No se ha podido preparar el espacio de búsqueda de esta sesión: {exc}")
         config_file = None
 
-    if not config_file:
-        pass
-    else:
+    if config_file:
         try:
             module_available = importlib.util.find_spec("job_scout.cli") is not None
         except (ImportError, ModuleNotFoundError, ValueError):

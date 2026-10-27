@@ -253,3 +253,9 @@ data/
 # Keep only non-sensitive Streamlit settings in version control
 .streamlit/secrets.toml
 .streamlit/secrets/
+
+# Local scratch directories created by test/debug runs
+.tmp/
+tmpx-*/
+.deps/
+pytest-out*.txt
