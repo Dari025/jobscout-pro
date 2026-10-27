@@ -1,4 +1,4 @@
-"""Build and deliver explainable top-job digests through Telegram or SMTP.
+"""Build and deliver explainable top-job digests through ntfy, Telegram or SMTP.
 
 The module never obtains or persists credentials: callers must supply them from
 environment variables or Streamlit secrets. Missing vacancy information is
@@ -7,6 +7,7 @@ reported as an item to verify, never treated as a negative fact.
 from __future__ import annotations
 
 import html
+import re
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -18,6 +19,7 @@ import requests
 
 MAX_TOP_JOBS = 10
 TELEGRAM_MESSAGE_LIMIT = 3500
+NTFY_MESSAGE_LIMIT = 3800
 
 
 class NotificationError(RuntimeError):
@@ -168,25 +170,47 @@ def render_digest_text(entries: Iterable[dict[str, Any]]) -> str:
     return "\n".join(lines).strip()
 
 
-def _split_telegram(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
-    """Split digest at job boundaries so every Telegram message stays below its limit."""
-    if len(text) <= limit:
-        return [text]
+def _split_digest_chunks(
+    text: str,
+    limit: int,
+    *,
+    byte_limit: int | None = None,
+) -> list[str]:
+    """Split on job boundaries and enforce character/UTF-8 byte limits without dropping text."""
+    def fits(value: str) -> bool:
+        return len(value) <= limit and (
+            byte_limit is None or len(value.encode("utf-8")) <= byte_limit
+        )
+
+    def split_long_block(block: str) -> list[str]:
+        if fits(block):
+            return [block]
+        parts: list[str] = []
+        current_part = ""
+        for character in block:
+            candidate_part = current_part + character
+            if current_part and not fits(candidate_part):
+                parts.append(current_part)
+                current_part = character
+            else:
+                current_part = candidate_part
+        if current_part:
+            parts.append(current_part)
+        return parts
+
     chunks: list[str] = []
     current = ""
     for block in text.split("\n\n"):
         candidate = block if not current else current + "\n\n" + block
-        if len(candidate) <= limit:
+        if fits(candidate):
             current = candidate
             continue
         if current:
             chunks.append(current)
-        if len(block) <= limit:
-            current = block
-        else:
-            current = block[: limit - 20].rstrip() + "\n[Texto recortado]"
-            chunks.append(current)
             current = ""
+        parts = split_long_block(block)
+        chunks.extend(parts[:-1])
+        current = parts[-1] if parts else ""
     if current:
         chunks.append(current)
     return chunks
@@ -206,7 +230,7 @@ def send_telegram_digest(
     text = render_digest_text(entries)
     if not text:
         raise NotificationError("No hay ofertas para enviar.")
-    chunks = _split_telegram(text)
+    chunks = _split_digest_chunks(text, TELEGRAM_MESSAGE_LIMIT)
     for chunk in chunks:
         try:
             response = requests.post(
@@ -223,6 +247,47 @@ def send_telegram_digest(
         except Exception as exc:
             # Do not include request URLs or exception text: the URL contains the bot token.
             raise NotificationError("No se pudo entregar el mensaje a Telegram. Revisa la conexión y la configuración.") from exc
+    return len(chunks)
+
+
+def send_ntfy_digest(
+    entries: Iterable[dict[str, Any]],
+    topic: str,
+    *,
+    timeout: float = 12.0,
+) -> int:
+    """Publish a plain-text digest to an ntfy.sh topic without account credentials."""
+    destination = _text(topic)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", destination):
+        raise NotificationError(
+            "El canal ntfy debe tener entre 20 y 64 caracteres y usar solo letras, números, guiones o guiones bajos."
+        )
+    entries = list(entries)
+    if not entries:
+        raise NotificationError("No hay ofertas para enviar.")
+    message_text = render_digest_text(entries)
+
+    chunks = _split_digest_chunks(message_text, NTFY_MESSAGE_LIMIT, byte_limit=NTFY_MESSAGE_LIMIT)
+    url = f"https://ntfy.sh/{destination}"
+    for index, chunk in enumerate(chunks, start=1):
+        try:
+            response = requests.post(
+                url,
+                data=chunk.encode("utf-8"),
+                headers={
+                    "Title": f"JobScout Pro Top 10 ({index}/{len(chunks)})",
+                    "Priority": "default",
+                    "Tags": "briefcase",
+                    "Content-Type": "text/plain; charset=utf-8",
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            # Do not expose the topic or request details in a user-facing error.
+            raise NotificationError(
+                "No se pudo publicar el aviso en ntfy. Comprueba la conexión y el nombre del canal."
+            ) from exc
     return len(chunks)
 
 

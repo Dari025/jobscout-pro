@@ -5,6 +5,7 @@ import importlib.util
 import os
 import queue
 import re
+import secrets as py_secrets
 import subprocess
 import sys
 import threading
@@ -53,10 +54,11 @@ from job_scout.notifications import (
     build_top_jobs_digest,
     render_digest_text,
     send_email_digest,
+    send_ntfy_digest,
     send_telegram_digest,
 )
 
-APP_BUILD = "2026.10.27-filters-alert-digests-v4"
+APP_BUILD = "2026.10.27-filters-alert-digests-v5-ntfy"
 
 
 st.set_page_config(
@@ -828,10 +830,28 @@ with tab_alerts:
         st.info("Todavía no hay ofertas que coincidan con los filtros. Lanza una búsqueda o amplía algún filtro para generar el Top 10.")
 
     st.divider()
-    st.markdown("### Envío sencillo")
+    st.markdown("### Avisos al móvil sin configurar bots ni correo")
     st.caption(
-        "Los secretos no se introducen ni se guardan en esta pantalla. Configura el token/SMTP en variables de entorno "
-        "o en los secretos de Streamlit; los destinos que escribas aquí solo se mantienen en esta sesión."
+        "La opción más directa es ntfy: no requiere cuenta, token de bot ni contraseña SMTP. "
+        "Solo tienes que suscribirte al mismo canal desde la app ntfy del móvil."
+    )
+    if "notification_ntfy_topic" not in st.session_state:
+        st.session_state["notification_ntfy_topic"] = (
+            _configured_secret("NTFY_TOPIC") or py_secrets.token_urlsafe(24)
+        )
+    ntfy_topic = st.text_input(
+        "Canal ntfy (usa el mismo nombre en el móvil)",
+        key="notification_ntfy_topic",
+        help="Se genera un canal aleatorio para empezar. Guarda el nombre y reutilízalo en futuras sesiones.",
+    ).strip()
+    ntfy_ready = bool(re.fullmatch(r"[A-Za-z0-9_-]{20,64}", ntfy_topic))
+    st.caption(
+        "Configuración en el móvil: instala ntfy, añade una suscripción al servidor https://ntfy.sh "
+        "y pega exactamente el canal que aparece aquí. Guarda el canal para reutilizarlo."
+    )
+    st.caption(
+        "Privacidad: el nombre del canal funciona como una clave compartida. Usa uno largo y aleatorio, "
+        "no lo publiques y no incluyas datos personales en él. El resumen se envía al servicio ntfy.sh."
     )
     if "notification_telegram_chat_id" not in st.session_state:
         st.session_state["notification_telegram_chat_id"] = _configured_secret("TELEGRAM_CHAT_ID")
@@ -840,13 +860,13 @@ with tab_alerts:
     dest_col1, dest_col2 = st.columns(2)
     with dest_col1:
         telegram_chat_id = st.text_input(
-            "Chat ID de Telegram", key="notification_telegram_chat_id",
+            "Chat ID de Telegram (opcional)", key="notification_telegram_chat_id",
             placeholder="Ej. 123456789",
-            help="Necesitas crear un bot con BotFather y abrirle un chat antes de obtener el ID.",
+            help="Solo es necesario si ya tienes un bot de Telegram configurado.",
         )
     with dest_col2:
         email_recipient = st.text_input(
-            "Correo de destino", key="notification_email_recipient",
+            "Correo de destino (opcional)", key="notification_email_recipient",
             placeholder="tu@correo.com",
         )
 
@@ -864,29 +884,44 @@ with tab_alerts:
     telegram_ready = bool(telegram_token and telegram_chat_id.strip())
     email_ready = bool(smtp_host and smtp_user and smtp_password and smtp_sender and email_recipient.strip())
 
-    readiness_col1, readiness_col2 = st.columns(2)
+    readiness_col1, readiness_col2, readiness_col3 = st.columns(3)
     with readiness_col1:
+        if ntfy_ready:
+            st.success("Canal ntfy válido; falta suscribirse en el móvil si aún no lo has hecho")
+        else:
+            st.warning("El canal ntfy debe tener entre 20 y 64 caracteres")
+    with readiness_col2:
         if telegram_ready:
             st.success("Telegram configurado")
         elif telegram_token:
             st.info("Falta el chat ID de Telegram")
         else:
             st.info("Telegram pendiente de configurar")
-    with readiness_col2:
+    with readiness_col3:
         if email_ready:
             st.success("Correo configurado")
         else:
             st.info("Correo pendiente de configurar")
 
-    send_col1, send_col2 = st.columns(2)
-    with send_col1:
+    send_ntfy_col, send_telegram_col, send_email_col = st.columns(3)
+    with send_ntfy_col:
+        if st.button("📲 Enviar Top 10 al móvil", key="send_digest_ntfy", use_container_width=True, disabled=not digest_entries or not ntfy_ready):
+            try:
+                message_count = send_ntfy_digest(digest_entries, ntfy_topic)
+                st.success(
+                    f"Resumen publicado en ntfy ({message_count} aviso(s)). "
+                    "La recepción móvil requiere una suscripción a ese canal."
+                )
+            except NotificationError as exc:
+                st.error(str(exc))
+    with send_telegram_col:
         if st.button("✈ Enviar Top 10 por Telegram", key="send_digest_telegram", use_container_width=True, disabled=not digest_entries):
             try:
                 message_count = send_telegram_digest(digest_entries, telegram_token, telegram_chat_id)
                 st.success(f"Top 10 enviado a Telegram ({message_count} mensaje(s)).")
             except NotificationError as exc:
                 st.error(str(exc))
-    with send_col2:
+    with send_email_col:
         if st.button("✉ Enviar Top 10 por correo", key="send_digest_email", use_container_width=True, disabled=not digest_entries):
             try:
                 send_email_digest(
@@ -903,15 +938,26 @@ with tab_alerts:
                 st.error(str(exc))
 
     st.checkbox(
+        "Enviar avisos al móvil por ntfy automáticamente después de cada búsqueda",
+        key="notify_ntfy_enabled",
+        help="Actívalo solo después de suscribirte al canal desde la app ntfy de tu móvil.",
+    )
+    st.checkbox(
         "Enviar automáticamente el Top 10 al terminar cada búsqueda correcta",
         key="notify_auto_enabled",
-        help="Solo se ejecuta después de pulsar Buscar oportunidades y si hay, al menos, un destino configurado. No es un servicio programado 24/7.",
+        help="Solo se ejecuta tras una búsqueda que inicies tú mientras la app está abierta. Envía por ntfy si lo activas aquí, y por los canales de Telegram/correo que estén configurados.",
     )
     pending_id = str(st.session_state.get("notify_pending_search_id", "") or "")
     sent_id = str(st.session_state.get("notify_auto_sent_id", "") or "")
     if pending_id and pending_id != sent_id:
         auto_sent = []
         auto_errors = []
+        if digest_entries and ntfy_ready and bool(st.session_state.get("notify_ntfy_enabled", False)):
+            try:
+                send_ntfy_digest(digest_entries, ntfy_topic)
+                auto_sent.append("ntfy móvil")
+            except NotificationError as exc:
+                auto_errors.append("ntfy móvil: " + str(exc))
         if digest_entries and telegram_ready:
             try:
                 send_telegram_digest(digest_entries, telegram_token, telegram_chat_id)
@@ -941,12 +987,14 @@ with tab_alerts:
         if not auto_sent and not auto_errors:
             st.info("No se ha enviado ninguna alerta: configura al menos un destino y vuelve a lanzar una búsqueda.")
 
-    with st.expander("Cómo configurar Telegram y correo"):
+    with st.expander("Configuración avanzada: ntfy persistente, Telegram y correo"):
         st.markdown(
             "Añade estos valores al archivo .streamlit/secrets.toml en local o a la sección Secrets del despliegue. "
             "También puedes usar variables de entorno con los mismos nombres. No compartas este archivo ni lo subas a GitHub."
         )
         st.code(
+            '# Opcional: fija el mismo canal ntfy entre sesiones\n'
+            '# NTFY_TOPIC = "elige-un-canal-largo-y-aleatorio"\n'
             'TELEGRAM_BOT_TOKEN = "token-del-bot"\n'
             'TELEGRAM_CHAT_ID = "123456789"\n'
             'SMTP_HOST = "smtp.gmail.com"\n'
@@ -958,9 +1006,10 @@ with tab_alerts:
             language="toml",
         )
         st.caption(
-            "Para Gmail suele hacer falta una contraseña de aplicación. En Telegram, crea el bot con BotFather, "
-            "inicia una conversación con él y configura el chat ID. No se envía ningún mensaje hasta que pulses "
-            "el botón o actives el envío automático."
+            "ntfy no necesita clave: suscríbete en el móvil al mismo canal. Si no fijas NTFY_TOPIC en Secrets, "
+            "el canal aleatorio se crea por sesión; guarda el nombre y vuelve a introducirlo si abres una sesión nueva. "
+            "Para Gmail suele hacer falta una contraseña de aplicación. Telegram requiere un bot y su chat ID. "
+            "No se envía ningún mensaje automáticamente salvo que actives esa opción."
         )
 
 with tab_discover:

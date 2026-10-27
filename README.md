@@ -88,17 +88,22 @@ Los filtros son acumulables: puesto/palabra clave, fecha de publicación, releva
 
 El modo sin CV sigue disponible: basta con indicar uno o varios puestos y una ubicación. El CV es opcional y solo se usa para el análisis de relevancia en la sesión actual.
 
-## Resumen y alertas por Telegram o correo
+## Resumen y alertas al móvil, por Telegram o por correo
 
-En el dashboard abre la pestaña **Alertas**. JobScout prepara un Top 10 de las ofertas que sobreviven a los filtros activos, ordenadas por relevancia, con salario, modalidad, contrato, experiencia, herramientas detectadas, pros y puntos que debes verificar. Los campos no publicados se marcan como pendientes de confirmar; no se inventan.
+**La opción más sencilla es ntfy**, que permite recibir avisos en el móvil sin crear un bot ni configurar correo. En la pestaña **Alertas**, copia el canal aleatorio que genera JobScout Pro y suscríbete a ese mismo nombre desde la aplicación ntfy, usando el servidor `https://ntfy.sh`. Trata el nombre como una clave compartida: no lo publiques y guárdalo para reutilizarlo. La guía completa está en [GUIA_ALERTAS.md](GUIA_ALERTAS.md).
 
-Puedes enviar el resumen manualmente por Telegram o correo, o activar **Enviar automáticamente el Top 10 al terminar cada búsqueda correcta**. El envío automático funciona cuando la aplicación está abierta y se completa una búsqueda que tú has lanzado. **No es un programador 24/7 ni envía un resumen diario en segundo plano.** Para eso haría falta un proceso o servicio programado y persistente.
+JobScout prepara un Top 10 de las ofertas que pasan los filtros activos, ordenadas por relevancia, con salario, modalidad, contrato, experiencia, enlaces, pros y puntos que conviene confirmar. **La información no publicada se marca como «No indicado» y las ofertas se conservan por defecto**; un dato desconocido solo las excluye cuando activas expresamente el filtro correspondiente.
 
-### Configuración local
+Puedes publicar el resumen manualmente en ntfy o enviarlo por Telegram/correo si tienes esas integraciones configuradas. También puedes activar el envío automático al terminar una búsqueda lanzada por ti, mientras la app está abierta. Para ntfy hay una casilla adicional de activación. **Esto no es un servicio diario 24/7 ni funciona cuando la app está cerrada.**
 
-Crea el archivo .streamlit/secrets.toml (está incluido en .gitignore) o usa variables de entorno con los mismos nombres. En el archivo puedes poner solo los canales que vayas a usar:
+### Configuración avanzada
+
+En local puedes crear `.streamlit/secrets.toml` (está incluido en `.gitignore`) o usar variables de entorno. En el despliegue de Streamlit, las mismas claves se añaden en la sección Secrets:
 
 ```toml
+# Opcional: conserva el mismo canal ntfy entre sesiones
+NTFY_TOPIC = "elige-un-canal-largo-y-aleatorio"
+
 TELEGRAM_BOT_TOKEN = "token-del-bot"
 TELEGRAM_CHAT_ID = "123456789"
 
@@ -110,15 +115,7 @@ SMTP_FROM = "tu-cuenta@gmail.com"
 SMTP_TO = "destino@gmail.com"
 ```
 
-Para Telegram, crea el bot con BotFather, inicia una conversación con él y añade el chat ID. Para Gmail normalmente necesitarás una contraseña de aplicación. El chat ID y destinatario también pueden escribirse en la pestaña Alertas; el token y la contraseña SMTP solo se leen de variables de entorno o secretos y no se muestran en pantalla. No compartas ni subas el archivo de secretos a GitHub.
-
-En PowerShell puedes crear/editar el archivo con VS Code y arrancar desde esa misma terminal:
-
-```powershell
-streamlit run app.py
-```
-
-En un despliegue de Streamlit, configura las mismas claves en la sección Secrets del servicio. Si solo quieres usar el buscador, puedes dejar todos los canales de notificación sin configurar.
+No necesitas configurar `NTFY_TOPIC` para probar ntfy: la app genera uno por sesión. Para reutilizarlo entre sesiones, guarda el nombre o fija un canal propio, largo y aleatorio en Secrets. Para Gmail normalmente necesitarás una contraseña de aplicación; no uses la contraseña habitual de tu cuenta. Nunca subas credenciales ni `secrets.toml` al repositorio.
 
 ## Pruebas
 
