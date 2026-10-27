@@ -9,9 +9,16 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunsplit
 from typing import Any, Iterable
+
+_SRC_DIR = Path(__file__).resolve().parent / "src"
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from job_scout.role_terms import role_search_variants
 
 
 def _text(value: Any) -> str:
@@ -569,6 +576,21 @@ def _title_phrase_matches(title: str, phrase: str) -> bool:
 
 
 
+def _role_alias_title_score(title: str, target_titles: list[str]) -> float:
+    """Give related geoscience titles a strong, but sub-exact, relevance score."""
+    best = 0.0
+    for target_phrase in target_titles:
+        variants = role_search_variants(target_phrase)
+        for alias in variants[1:]:
+            normalized_alias = _normalise_words(alias)
+            if not normalized_alias:
+                continue
+            if _contains_term(title, normalized_alias) or _title_phrase_matches(title, normalized_alias):
+                best = max(best, 0.80)
+                break
+    return best
+
+
 def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
               cv_text: str = "") -> int:
     """Return a transparent 0–100 relevance index (not a hiring probability).
@@ -613,6 +635,10 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
                 exact_scores.append(sum(1 for token in tokens if _contains_term(title, token)) / len(tokens))
         if exact_scores:
             title_score = max(exact_scores)
+        # Search adapters can deliberately return a close role variant (e.g.
+        # "Groundwater Specialist" for "Hydrogeologist"). Keep it relevant
+        # without scoring it above an exact title match.
+        title_score = max(title_score, _role_alias_title_score(title, target_titles))
 
     keyword_config = profile.get("keywords", {})
     tier_weights = {"critical": 5.0, "strong": 3.0, "moderate": 1.5, "weak": 1.0}

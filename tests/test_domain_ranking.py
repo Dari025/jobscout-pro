@@ -88,3 +88,40 @@ def test_compound_geoscientist_title_matches_generic_scientist_target():
 def test_one_explicit_target_among_multiple_roles_overrides_domain_warning():
     config = _config("Senior Geoscientist, Oncology Research Scientist")
     assert professional_domain_mismatch(ONCOLOGY_JOB, config, IGME_CV) is None
+
+
+
+def test_geologist_search_scores_hydrogeologist_as_a_close_role_variant():
+    alias_score = score_job(
+        {
+            "title": "Hydrogeologist",
+            "company": "Example Water",
+            "description": "Groundwater and hydrogeology research.",
+        },
+        _config("Geologist"),
+    )
+    exact_score = score_job(
+        {
+            "title": "Geologist",
+            "company": "Example Earth",
+            "description": "Geological mapping and field research.",
+        },
+        _config("Geologist"),
+    )
+
+    assert alias_score >= 75
+    assert alias_score < exact_score
+
+
+def test_hydrogeologist_search_keeps_groundwater_specialist_visible():
+    score = score_job(
+        {
+            "title": "Groundwater Specialist",
+            "company": "Example Water",
+            "description": "Hydrogeology, aquifers and groundwater modelling.",
+        },
+        _config("Hydrogeologist"),
+    )
+
+    # The dashboard's default relevance threshold is 20/100.
+    assert score >= 75
