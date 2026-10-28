@@ -56,7 +56,7 @@ from job_scout.notifications import (
     render_digest_text,
 )
 
-APP_BUILD = "2026.10.27-filters-alert-digests-v6-simple-share"
+APP_BUILD = "2026.10.28-seniority-ranking-compact-cv-v7"
 
 
 st.set_page_config(
@@ -94,6 +94,31 @@ st.markdown(
     .stButton > button[kind="primary"] { background:linear-gradient(100deg,#67e8f9,#818cf8); color:#07111d; border:0; }
     .stButton > button:hover, .stLinkButton > a:hover { transform:translateY(-1px); border-color:#67e8f9; }
     [data-testid="stExpander"] { border:1px solid #263752; border-radius:13px; }
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+      margin-bottom:.35rem;
+      background:rgba(17,29,48,.48);
+      border-color:#2b3d59;
+      border-radius:12px;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+      padding-top:.62rem;
+      padding-bottom:.62rem;
+      font-weight:700;
+    }
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] label p {
+      font-size:.86rem;
+      line-height:1.4;
+    }
+    .cv-privacy-note {
+      color:#b8c7df;
+      background:rgba(17,29,48,.66);
+      border:1px solid #263752;
+      border-radius:10px;
+      padding:.7rem .8rem;
+      font-size:.82rem;
+      line-height:1.5;
+      margin:.3rem 0 .8rem;
+    }
     div[data-baseweb="select"] > div, div[data-baseweb="input"] > div { background:#111d30; border-color:#2a3c58; }
     .soft-note { color:#9eafc8; font-size:.86rem; line-height:1.5; }
     .score-pill { color:#8fe9f2; font-size:.78rem; letter-spacing:.08em; text-transform:uppercase; font-weight:800; }
@@ -387,73 +412,77 @@ with st.sidebar:
                 "y, si subes un CV, con su contenido."
             )
 
-    st.markdown("### Currículum (opcional)")
-    st.caption(
-        "El CV solo se utiliza para contrastar el perfil con las ofertas de esta sesión; "
-        "no es necesario para buscar puestos."
+    cv_status = "CV listo" if st.session_state.cv_fingerprint else (
+        "pendiente" if st.session_state.get("cv_consent_clean", False) else "opcional"
     )
-    st.info(
-        "Privacidad del CV: si das tu consentimiento, el PDF se analiza en la memoria del servidor "
-        "de esta app. El código del dashboard no lo envía a portales de empleo ni a modelos de IA, "
-        "y no lo guarda en SQLite ni en el YAML de búsqueda. Puedes retirar el consentimiento en "
-        "cualquier momento o pulsar «Borrar CV y archivo». No subas información de terceros ni "
-        "documentos que no quieras procesar en este servidor."
-    )
-    consent = st.checkbox(
-        "Consiento que se procese el CV en esta sesión.",
-        key="cv_consent_clean",
-        on_change=_handle_cv_consent_change,
-        help="Marca esta casilla antes de seleccionar el archivo. Al desmarcarla, se elimina el texto extraído y se reinicia el selector.",
-    )
-    st.button(
-        "Borrar CV y archivo",
-        key="clear_cv_session_button",
-        on_click=_clear_cv_for_session,
-        use_container_width=True,
-        help="Borra el texto usado para el ranking y reinicia el selector de archivos.",
-    )
-    uploader_key = f"uploaded_cv_clean_{int(st.session_state.cv_uploader_version)}"
-    uploaded_cv = st.file_uploader(
-        "Seleccionar CV en PDF",
-        type=["pdf"],
-        key=uploader_key,
-        disabled=not consent,
-        help="Activa primero el consentimiento. Máximo 5 MB y 15 páginas; el PDF se analiza en memoria y no se guarda en disco.",
-    )
-    if not consent:
-        st.caption("El selector se activa después de marcar el consentimiento.")
-    if not uploaded_cv and st.session_state.cv_fingerprint:
-        # The user removed the file through the uploader's own clear control.
-        # Purge the extracted text; no CV remains in scoring.
-        st.session_state.cv_text = ""
-        st.session_state.cv_fingerprint = ""
-        st.session_state["cv_removed_notice"] = True
-
-    if uploaded_cv and consent:
-        file_bytes = uploaded_cv.getvalue()
-        fingerprint = hashlib.sha256(file_bytes).hexdigest()
-        if fingerprint != st.session_state.cv_fingerprint:
-            # Do not keep an older CV active if replacing it with an invalid PDF.
+    with st.expander(f"📄 Currículum · {cv_status}", expanded=False):
+        st.caption(
+            "Opcional: úsalo para contrastar el perfil con las ofertas de esta sesión."
+        )
+        st.markdown(
+            '<div class="cv-privacy-note"><strong>Privacidad.</strong> El PDF se procesa '
+            "en la memoria de esta sesión. El dashboard no lo envía a portales de empleo "
+            "ni a modelos de IA, y no lo guarda en SQLite ni en el YAML de búsqueda. "
+            "Retira el consentimiento o borra el CV cuando quieras.</div>",
+            unsafe_allow_html=True,
+        )
+        consent = st.checkbox(
+            "Consiento que se procese el CV en esta sesión.",
+            key="cv_consent_clean",
+            on_change=_handle_cv_consent_change,
+            help="Al desmarcarla, se elimina el texto extraído y se reinicia el selector.",
+        )
+        st.button(
+            "Borrar CV",
+            key="clear_cv_session_button",
+            on_click=_clear_cv_for_session,
+            use_container_width=True,
+            help="Elimina el texto del CV de esta sesión y reinicia el selector.",
+        )
+        uploader_key = f"uploaded_cv_clean_{int(st.session_state.cv_uploader_version)}"
+        uploaded_cv = st.file_uploader(
+            "Seleccionar CV en PDF",
+            type=["pdf"],
+            key=uploader_key,
+            disabled=not consent,
+            help="Activa primero el consentimiento. Máximo 5 MB y 15 páginas; se analiza en memoria y no se guarda en disco.",
+        )
+        if not consent:
+            st.caption("Activa el consentimiento para seleccionar el PDF.")
+        if not uploaded_cv and st.session_state.cv_fingerprint:
+            # The user removed the file through the uploader's own clear control.
+            # Purge the extracted text; no CV remains in scoring.
             st.session_state.cv_text = ""
             st.session_state.cv_fingerprint = ""
-            try:
-                extraction = extract_pdf_text(file_bytes)
-            except CVProcessingError as exc:
-                st.warning(str(exc))
-            else:
-                st.session_state.cv_text = extraction.text
-                st.session_state.cv_fingerprint = fingerprint
-                st.session_state["cv_changed_notice"] = True
-                st.session_state["cv_truncated_notice"] = extraction.truncated
-                st.rerun()
+            st.session_state["cv_removed_notice"] = True
+
+        if uploaded_cv and consent:
+            file_bytes = uploaded_cv.getvalue()
+            fingerprint = hashlib.sha256(file_bytes).hexdigest()
+            if fingerprint != st.session_state.cv_fingerprint:
+                # Do not keep an older CV active if replacing it with an invalid PDF.
+                st.session_state.cv_text = ""
+                st.session_state.cv_fingerprint = ""
+                try:
+                    extraction = extract_pdf_text(file_bytes)
+                except CVProcessingError as exc:
+                    st.warning(str(exc))
+                else:
+                    st.session_state.cv_text = extraction.text
+                    st.session_state.cv_fingerprint = fingerprint
+                    st.session_state["cv_changed_notice"] = True
+                    st.session_state["cv_truncated_notice"] = extraction.truncated
+                    st.rerun()
+
+    # Keep notices outside the collapsed disclosure so users can see confirmations.
     if st.session_state.pop("cv_changed_notice", False):
-        st.success("CV procesado en esta sesión; el análisis de encaje se ha actualizado.")
+        st.success("CV procesado; el análisis del encaje se ha actualizado.")
     if st.session_state.pop("cv_truncated_notice", False):
-        st.warning("Se ha limitado el texto extraído a 100.000 caracteres para proteger los recursos del servidor.")
+        st.warning("El texto extraído se ha limitado a 100.000 caracteres para proteger los recursos del servidor.")
     if st.session_state.pop("cv_cleared_notice", False):
-        st.info("CV y texto extraído eliminados de esta sesión.")
+        st.info("CV eliminado de esta sesión.")
     if st.session_state.pop("cv_removed_notice", False):
-        st.info("Se ha retirado el consentimiento o el archivo; el texto del CV se ha eliminado de esta sesión.")
+        st.info("Se ha retirado el consentimiento o el archivo; el CV se ha eliminado de esta sesión.")
 
     st.divider()
     st.markdown("### Filtros")
@@ -1133,7 +1162,7 @@ with tab_method:
         """
         **Qué hace el índice de encaje**
         
-        Combina el título objetivo, las palabras clave que figuran en la configuración y, cuando das tu consentimiento, el solapamiento textual con el CV. Es una regla explicable para ordenar la lista: **no es una probabilidad de entrevista ni una evaluación automática de tus capacidades**.
+        Combina el título objetivo, las palabras clave que figuran en la configuración y, cuando das tu consentimiento, el solapamiento textual con el CV. Si el objetivo indica un perfil senior (o el CV aporta señales claras de experiencia senior), el ranking limita las ofertas de prácticas y reduce las junior para que no desplacen a puestos de nivel adecuado. Es una heurística explicable, no una probabilidad de entrevista.
 
         Si has cargado un CV, también se comprueba si el perfil y la vacante parecen pertenecer a ámbitos profesionales claramente distintos. Cuando hay señales fuertes de incompatibilidad (por ejemplo, geociencias frente a oncología), el índice se limita y la tarjeta muestra el motivo. Esta comprobación usa reglas conservadoras y puede equivocarse; un cambio de carrera intencional se puede indicar escribiendo el puesto objetivo correspondiente.
 

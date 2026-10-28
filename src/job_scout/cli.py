@@ -32,6 +32,7 @@ from job_scout.db import JobDB
 from job_scout.export import write_csv, write_json
 from job_scout.models import Location, ScrapeParams, ScrapeRun, Site
 from job_scout.notify import Notifier
+from job_scout.role_terms import search_query_variants
 from job_scout.scorer import JobScorer
 from job_scout.scrapers import get_scraper
 
@@ -153,6 +154,18 @@ def scrape(
         # API-backed sources are light, so allow concurrent queries without making
         # the legacy portal scrapers generate unbounded fan-out.
         cfg.scraping.max_workers = min(max(cfg.scraping.max_workers, 6), 8)
+
+    # Search exact senior titles first, then retry the same professional role
+    # without the seniority prefix. Some job boards do not index seniority well.
+    expanded_terms: list[str] = []
+    seen_search_terms: set[str] = set()
+    for search_term in terms:
+        for variant in search_query_variants(search_term):
+            key = variant.casefold()
+            if key not in seen_search_terms:
+                seen_search_terms.add(key)
+                expanded_terms.append(variant)
+    terms = expanded_terms
 
     new_high_score: list = []
     total_found = 0

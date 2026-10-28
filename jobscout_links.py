@@ -581,6 +581,115 @@ def _role_alias_title_score(title: str, target_titles: list[str]) -> float:
     return best
 
 
+_SENIORITY_SIGNAL_RE = re.compile(
+    r"(?<!\w)(?:senior|sr\.?|lead|principal|staff|head of|director|chief|"
+    r"vice president|vp|managing director)(?!\w)",
+    flags=re.IGNORECASE,
+)
+_EARLY_CAREER_SIGNAL_RE = re.compile(
+    r"(?<!\w)(?:junior|jr\.?|entry[\s-]?level|graduate|trainee|"
+    r"early[\s-]?career|new grad|apprentice)(?!\w)",
+    flags=re.IGNORECASE,
+)
+_INTERNSHIP_SIGNAL_RE = re.compile(
+    r"(?<!\w)(?:intern(?:ship)?|practicas?|beca|working student)(?!\w)",
+    flags=re.IGNORECASE,
+)
+
+
+def _has_senior_experience_evidence(text: str) -> bool:
+    """Detect clear senior CV evidence without treating any long CV as senior."""
+    normalized = _normalise_words(text)
+    if not normalized:
+        return False
+    if re.search(
+        r"(?<!\w)(?:head of|director|chief|vice president|managing director)(?!\w)",
+        normalized,
+    ):
+        return True
+    # A passing mention of "senior colleagues" anywhere in a CV is not enough.
+    # Check for a senior-level role signal near the profile section instead.
+    opening = normalized[:1800]
+    has_role_context = re.search(
+        r"(?<!\w)(?:analyst|scientist|economist|engineer|consultant|manager|"
+        r"specialist|researcher|geologist|geophysicist|advisor|adviser|executive|"
+        r"accountant|architect|officer|product owner|project lead)(?!\w)",
+        opening,
+    )
+    if _SENIORITY_SIGNAL_RE.search(opening) and has_role_context:
+        return True
+    # A long track record alone is a conservative signal; five years can still
+    # be intermediate, so require eight years unless a senior title is present.
+    years_patterns = (
+        r"(?<!\w)(?:8|9|[1-9]\d)\+?\s*(?:years?|yrs?|anos?)\b.{0,45}\b(?:of )?(?:relevant )?(?:work )?experience\b",
+        r"\b(?:experience|experiencia)\b.{0,35}\b(?:8|9|[1-9]\d)\+?\s*(?:years?|yrs?|anos?)\b",
+    )
+    return any(re.search(pattern, normalized) for pattern in years_patterns)
+
+
+def _infer_target_seniority(target_titles: list[str], cv_text: str) -> str | None:
+    """Infer the desired level from explicit role titles or strong CV evidence."""
+    target_text = " | ".join(_normalise_words(item) for item in target_titles)
+    wants_senior = bool(_SENIORITY_SIGNAL_RE.search(target_text))
+    wants_early = bool(
+        _EARLY_CAREER_SIGNAL_RE.search(target_text)
+        or _INTERNSHIP_SIGNAL_RE.search(target_text)
+    )
+    if wants_senior and wants_early:
+        # Mixed explicit targets should not trigger a global level penalty.
+        return None
+    if wants_senior:
+        return "senior"
+    if wants_early:
+        return "early"
+    return "senior" if _has_senior_experience_evidence(cv_text) else None
+
+
+def _infer_job_seniority(row: dict[str, Any], title: str, description: str) -> str | None:
+    """Infer the advertised level using title, structured metadata and experience evidence."""
+    title_text = _normalise_words(title)
+    experience_level = _normalise_words(row.get("experience_level"))
+    employment_type = _normalise_words(row.get("employment_type_label"))
+    structured_type = _normalise_words(row.get("job_type"))
+    combined = " ".join(
+        part for part in (title_text, experience_level, employment_type, structured_type) if part
+    )
+
+    if (
+        _INTERNSHIP_SIGNAL_RE.search(combined)
+        or "practicas beca" in employment_type
+        or "internship" in structured_type
+    ):
+        return "internship"
+    if (
+        _EARLY_CAREER_SIGNAL_RE.search(title_text)
+        or _EARLY_CAREER_SIGNAL_RE.search(experience_level)
+    ):
+        return "junior"
+    if (
+        _SENIORITY_SIGNAL_RE.search(title_text)
+        or "senior lead" in experience_level
+        or "principal" in experience_level
+    ):
+        return "senior"
+
+    years_min = row.get("experience_min_years")
+    try:
+        years_min = float(years_min) if years_min not in (None, "") else None
+    except (TypeError, ValueError):
+        years_min = None
+    if years_min is not None and years_min >= 5:
+        return "senior"
+
+    normalized_description = _normalise_words(description)
+    if re.search(
+        r"\b(?:at least|minimum(?: of)?|over|more than|al menos|minimo de?)\s*[5-9]\+?\s*(?:years?|yrs?|anos?)\b.{0,35}\bexperience\b",
+        normalized_description,
+    ):
+        return "senior"
+    return None
+
+
 def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
               cv_text: str = "") -> int:
     """Return a transparent 0–100 relevance index (not a hiring probability).
@@ -683,4 +792,18 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
         job_domain = _primary_job_domain(title, description)
         if cv_domain and job_domain == cv_domain:
             score = min(100, score + 8)
+
+    # Don't let broad keyword overlap make internships dominate a senior search.
+    # The penalty is only activated by an explicit senior target or clear CV evidence.
+    target_seniority = _infer_target_seniority(
+        target_titles, cv_text or _text(profile.get("resume_text", ""))
+    )
+    if target_seniority == "senior":
+        job_seniority = _infer_job_seniority(row, title, description)
+        if job_seniority == "internship":
+            score = min(score, 15)
+        elif job_seniority == "junior":
+            score = min(score, 30)
+        elif job_seniority == "senior":
+            score = min(100, score + 5)
     return score
