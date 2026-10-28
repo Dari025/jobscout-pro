@@ -24,7 +24,7 @@ def _config(target_title: str) -> dict:
 
 def _internship_job() -> dict:
     return {
-        "title": "Geology Intern",
+        "title": "Geologist Intern",
         "company": "Earth Sciences Ltd",
         "description": "Geology and hydrogeology internship for students.",
         "experience_level": "Prácticas / beca",
