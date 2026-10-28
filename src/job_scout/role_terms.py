@@ -8,7 +8,7 @@ import re
 # is advertised without "Senior", "Lead", "Principal" or "Staff" in its title.
 # Keep the exact query first, then try the professional role without that prefix.
 _SENIORITY_PREFIX = re.compile(
-    r"^(?:senior|sr\\.?|lead|principal|staff)\\s+(.+)$",
+    r"^(?:senior|sr\.?|lead|principal|staff)\s+(.+)$",
     flags=re.IGNORECASE,
 )
 
@@ -19,7 +19,7 @@ def search_query_variants(search_term: str) -> list[str]:
     The original query always comes first. Only explicit seniority prefixes are
     removed, and unrelated role terms are never generated.
     """
-    query = re.sub(r"\\s+", " ", str(search_term or "")).strip()
+    query = re.sub(r"\s+", " ", str(search_term or "")).strip()
     if not query:
         return []
 
