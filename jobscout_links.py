@@ -582,17 +582,17 @@ def _role_alias_title_score(title: str, target_titles: list[str]) -> float:
 
 
 _SENIORITY_SIGNAL_RE = re.compile(
-    r"(?<!\\w)(?:senior|sr\\.?|lead|principal|staff|head of|director|chief|"
-    r"vice president|vp|managing director)(?!\\w)",
+    r"(?<!\w)(?:senior|sr\.?|lead|principal|staff|head of|director|chief|"
+    r"vice president|vp|managing director)(?!\w)",
     flags=re.IGNORECASE,
 )
 _EARLY_CAREER_SIGNAL_RE = re.compile(
-    r"(?<!\\w)(?:junior|jr\\.?|entry[\\s-]?level|graduate|trainee|"
-    r"early[\\s-]?career|new grad|apprentice)(?!\\w)",
+    r"(?<!\w)(?:junior|jr\.?|entry[\s-]?level|graduate|trainee|"
+    r"early[\s-]?career|new grad|apprentice)(?!\w)",
     flags=re.IGNORECASE,
 )
 _INTERNSHIP_SIGNAL_RE = re.compile(
-    r"(?<!\\w)(?:intern(?:ship)?|practicas?|beca|working student)(?!\\w)",
+    r"(?<!\w)(?:intern(?:ship)?|practicas?|beca|working student)(?!\w)",
     flags=re.IGNORECASE,
 )
 
@@ -603,7 +603,7 @@ def _has_senior_experience_evidence(text: str) -> bool:
     if not normalized:
         return False
     if re.search(
-        r"(?<!\\w)(?:head of|director|chief|vice president|managing director)(?!\\w)",
+        r"(?<!\w)(?:head of|director|chief|vice president|managing director)(?!\w)",
         normalized,
     ):
         return True
@@ -612,8 +612,8 @@ def _has_senior_experience_evidence(text: str) -> bool:
     # A long track record alone is a conservative signal; five years can still
     # be intermediate, so require eight years unless a senior title is present.
     years_patterns = (
-        r"(?<!\\w)(?:8|9|[1-9]\\d)\\+?\\s*(?:years?|yrs?|anos?)\\b.{0,45}\\b(?:of )?(?:relevant )?(?:work )?experience\\b",
-        r"\\b(?:experience|experiencia)\\b.{0,35}\\b(?:8|9|[1-9]\\d)\\+?\\s*(?:years?|yrs?|anos?)\\b",
+        r"(?<!\w)(?:8|9|[1-9]\d)\+?\s*(?:years?|yrs?|anos?)\b.{0,45}\b(?:of )?(?:relevant )?(?:work )?experience\b",
+        r"\b(?:experience|experiencia)\b.{0,35}\b(?:8|9|[1-9]\d)\+?\s*(?:years?|yrs?|anos?)\b",
     )
     return any(re.search(pattern, normalized) for pattern in years_patterns)
 
@@ -674,7 +674,7 @@ def _infer_job_seniority(row: dict[str, Any], title: str, description: str) -> s
 
     normalized_description = _normalise_words(description)
     if re.search(
-        r"\\b(?:at least|minimum(?: of)?|over|more than|al menos|minimo de?)\\s*[5-9]\\+?\\s*(?:years?|yrs?|anos?)\\b.{0,35}\\bexperience\\b",
+        r"\b(?:at least|minimum(?: of)?|over|more than|al menos|minimo de?)\s*[5-9]\+?\s*(?:years?|yrs?|anos?)\b.{0,35}\bexperience\b",
         normalized_description,
     ):
         return "senior"
