@@ -603,7 +603,7 @@ def _has_senior_experience_evidence(text: str) -> bool:
     if not normalized:
         return False
     if re.search(
-        r"(?<!\\w)(?:head of|director|chief|vice president|managing director)(?!\\w)",
+        r"(?<!\w)(?:head of|director|chief|vice president|managing director)(?!\w)",
         normalized,
     ):
         return True
@@ -611,9 +611,9 @@ def _has_senior_experience_evidence(text: str) -> bool:
     # Check for a senior-level role signal near the profile section instead.
     opening = normalized[:1800]
     has_role_context = re.search(
-        r"(?<!\\w)(?:analyst|scientist|economist|engineer|consultant|manager|"
+        r"(?<!\w)(?:analyst|scientist|economist|engineer|consultant|manager|"
         r"specialist|researcher|geologist|geophysicist|advisor|adviser|executive|"
-        r"accountant|architect|officer|product owner|project lead)(?!\\w)",
+        r"accountant|architect|officer|product owner|project lead)(?!\w)",
         opening,
     )
     if _SENIORITY_SIGNAL_RE.search(opening) and has_role_context:
