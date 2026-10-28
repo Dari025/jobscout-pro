@@ -603,11 +603,20 @@ def _has_senior_experience_evidence(text: str) -> bool:
     if not normalized:
         return False
     if re.search(
-        r"(?<!\w)(?:head of|director|chief|vice president|managing director)(?!\w)",
+        r"(?<!\\w)(?:head of|director|chief|vice president|managing director)(?!\\w)",
         normalized,
     ):
         return True
-    if _SENIORITY_SIGNAL_RE.search(normalized):
+    # A passing mention of "senior colleagues" anywhere in a CV is not enough.
+    # Check for a senior-level role signal near the profile section instead.
+    opening = normalized[:1800]
+    has_role_context = re.search(
+        r"(?<!\\w)(?:analyst|scientist|economist|engineer|consultant|manager|"
+        r"specialist|researcher|geologist|geophysicist|advisor|adviser|executive|"
+        r"accountant|architect|officer|product owner|project lead)(?!\\w)",
+        opening,
+    )
+    if _SENIORITY_SIGNAL_RE.search(opening) and has_role_context:
         return True
     # A long track record alone is a conservative signal; five years can still
     # be intermediate, so require eight years unless a senior title is present.
