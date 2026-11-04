@@ -8,7 +8,11 @@
 - El usuario elige un PDF y debe marcar una casilla de consentimiento antes de que el texto se extraiga y se use para el ranking.
 - El archivo se recibe y analiza en la memoria del servidor que ejecuta Streamlit. Límites actuales: 5 MB, 15 páginas y 100.000 caracteres extraídos.
 - El texto del CV se mantiene en el estado de la sesión de Streamlit. El código del dashboard no lo escribe en YAML ni en la base SQLite de vacantes.
-- El código del dashboard no envía el CV a las fuentes de empleo ni a Gemini/u otro modelo externo para puntuar las vacantes.
+- El ranking ordinario no envía el CV a las fuentes de empleo ni a un modelo externo.
+- Existe una pestaña independiente de análisis de CV con Groq. Solo se ejecuta tras marcar un consentimiento específico y pulsar el botón de análisis; el consentimiento de procesamiento local del PDF no habilita por sí mismo el envío externo.
+- La app transmite texto extraído, nunca el PDF, elimina patrones comunes de email, teléfono y URL y limita el texto a 18.000 caracteres. La redacción automática no garantiza anonimización completa; el CV puede seguir conteniendo nombres, empleadores, centros formativos u otros datos personales.
+- La clave API personal y el informe se mantienen en el estado de sesión; no se escriben en YAML ni SQLite. La clave pasa por el servidor Streamlit que ejecuta JobScout y, por tanto, el administrador de la instancia alojada debe considerarse parte de la superficie de confianza. En despliegues de terceros se debe advertir al usuario que no introduzca una clave si no confía en quien opera el servidor; una instalación local o propia reduce esa exposición frente a un hosting ajeno. Al retirar el consentimiento de IA se elimina el informe y se borra la clave del estado de sesión. Al borrar o sustituir el CV también se invalida el informe.
+- Groq declara que no utiliza customer data para entrenar sus modelos. La inferencia no se retiene por defecto, pero entradas/salidas pueden registrarse hasta 30 días para solucionar problemas o investigar abusos, salvo que se habilite Zero Data Retention (ZDR). Groq declara que los datos retenidos se alojan en GCP en Estados Unidos. El usuario debe revisar las condiciones vigentes y sus controles de datos antes de aceptar.
 - Desmarcar el consentimiento elimina el texto extraído de la puntuación. El botón **Borrar CV y archivo** también reinicia el selector de archivos para retirar el documento cargado de esa sesión.
 - El parser no guarda el PDF en una ruta local. Este hecho describe el código; no debe confundirse con una garantía de borrado físico inmediato de memoria o de la infraestructura del proveedor de alojamiento.
 
@@ -22,13 +26,14 @@
 
 - La interfaz utiliza fuentes del sistema y no descarga tipografías desde Google Fonts u otro proveedor externo.
 
-La búsqueda envía a los proveedores de búsqueda los términos del puesto y la ubicación necesarios para consultar vacantes. No envía el texto del CV. Los proveedores de empleo pueden recibir y registrar las consultas HTTP normales de sus servicios. Si el dashboard está desplegado en la nube, el archivo PDF viaja desde el navegador hasta el servidor de la aplicación y el proveedor de alojamiento opera esa infraestructura.
+La búsqueda envía a los proveedores de búsqueda los términos del puesto y la ubicación necesarios para consultar vacantes. No envía el texto del CV. La autorización técnica de un endpoint público no equivale necesariamente a una licencia para redistribuir anuncios en una aplicación multiusuario. Freehire limita el uso sin clave a lo personal/no comercial y exige plan API para mostrar anuncios en productos ofrecidos a terceros; Arbeitnow exige enlazar de vuelta y puede revocar el permiso. Revisa las condiciones y el README antes de compartir el servicio. Los proveedores de empleo pueden recibir y registrar las consultas HTTP normales de sus servicios. Si el dashboard está desplegado en la nube, el archivo PDF viaja desde el navegador hasta el servidor de la aplicación y el proveedor de alojamiento opera esa infraestructura. Si el usuario activa de forma separada el análisis con IA, el texto redactado se transmite a la API de Groq en Estados Unidos; la app no almacena una copia local adicional de esa petición ni usa endpoints de batch o fine-tuning.
 
 ## Acciones para el usuario
 1. No subir currículums de terceros ni información que no se quiera procesar en el servidor.
-2. Desmarcar el consentimiento deja de usar el texto del CV para el ranking.
-3. Pulsar **Borrar CV y archivo** retira el texto extraído y reinicia el selector del archivo.
-4. Recargar/cerrar la pestaña puede reiniciar el estado de la sesión; no debe presentarse como una garantía de borrado forense de infraestructura.
+2. Desmarcar el consentimiento local deja de usar el texto del CV para el ranking y elimina el informe de IA asociado.
+3. Desmarcar el consentimiento específico de IA elimina el informe y la clave API del estado de sesión.
+4. Pulsar **Borrar CV** retira el texto extraído y reinicia el selector del archivo.
+5. Recargar/cerrar la pestaña puede reiniciar el estado de la sesión; no debe presentarse como una garantía de borrado forense de infraestructura.
 
 ## Lista obligatoria antes de un lanzamiento comercial
 - [ ] Identificar legalmente al responsable del tratamiento y publicar un medio de contacto válido.
