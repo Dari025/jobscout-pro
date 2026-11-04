@@ -11,8 +11,8 @@ import re
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunsplit
-from typing import Any, Iterable
 
 _SRC_DIR = Path(__file__).resolve().parent / "src"
 if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
@@ -20,6 +20,8 @@ if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
 
 from job_scout.matching import (
     contains_normalised_term as _contains_norm_term,
+)
+from job_scout.matching import (
     normalise_words as _normalise_words,
 )
 from job_scout.role_terms import role_search_variants
@@ -76,7 +78,10 @@ def is_specific_job_url(value: Any) -> bool:
     if host == "google.com" or host.endswith(".google.com") or host == "bing.com" or host.endswith(".bing.com"):
         if path == "/search" or path.startswith("/search/"):
             return False
-    if re.search(r"/(jobs?/)?(search|job-search|search-jobs|results)(/|$)", path):
+    # Workday's canonical posting URL contains /search/job/{location}/{slug};
+    # that is a concrete vacancy, unlike a generic /jobs/search listing page.
+    workday_detail = bool(re.search(r"/search/job/[^/]+/[^/]+", path))
+    if not workday_detail and re.search(r"/(jobs?/)?(search|job-search|search-jobs|results)(/|$)", path):
         return False
     if path in {"/", "/jobs", "/jobs/", "/job", "/job/", "/careers", "/careers/",
                 "/career", "/career/", "/openings", "/job-openings", "/vacancies",
@@ -142,17 +147,28 @@ def best_job_url(row: dict[str, Any]) -> str:
 
 
 def canonical_job_identity(row: dict[str, Any]) -> str:
-    """Build a cross-source dedup key, preferring the concrete posting URL over source IDs."""
+    """Build a stable cross-source identity, preferring a full posting fingerprint.
+
+    Job aggregators often expose the same employer vacancy under different
+    tracking URLs or separate mirror URLs. Title, employer, location and
+    publication date provide a useful cross-source key when all are present.
+    """
     job = canonicalize_row(row)
     source_url, apply_url = choose_job_links(job)
     chosen = source_url or apply_url
+
+    text_parts = tuple(
+        _normalise_words(job.get(key))
+        for key in ("title", "company", "location", "date_posted")
+    )
+    if all(text_parts):
+        return "text:" + "|".join(text_parts)
+
+    normalized_url = ""
     if chosen:
         try:
             parsed = urlparse(chosen)
-            host = (parsed.hostname or "").lower().rstrip(".")
-            if host.startswith("www."):
-                host = host[4:]
-            # Keep identity query parameters (e.g. Indeed's jk) but drop tracking noise.
+            host = (parsed.hostname or "").lower().rstrip(".").removeprefix("www.")
             query_pairs = [
                 (key, value)
                 for key, value in parse_qsl(parsed.query, keep_blank_values=False)
@@ -173,18 +189,16 @@ def canonical_job_identity(row: dict[str, Any]) -> str:
                 urlencode(query_pairs),
                 "",
             ))
-            return f"url:{normalized_url}"
         except (ValueError, TypeError):
-            pass
+            normalized_url = chosen
 
+    if normalized_url:
+        return f"url:{normalized_url}"
     source = _text(job.get("source")).casefold()
     job_id = _text(job.get("id"))
     if job_id:
         return f"id:{source}:{job_id}"
-    return "text:" + "|".join(
-        _normalise_words(job.get(key))
-        for key in ("title", "company", "location", "date_posted")
-    )
+    return "text:" + "|".join(text_parts)
 
 
 def canonicalize_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -359,11 +373,22 @@ _DOMAIN_LABELS = {
     "life_sciences": "Ciencias de la vida",
     "economics_analytics": "Economía / analítica",
     "software_it": "Software / tecnología",
+    "information_security": "Ciberseguridad / seguridad informática",
     "environmental_science": "Medioambiente",
     "finance_accounting": "Finanzas / contabilidad",
     "law": "Derecho",
     "marketing_sales": "Marketing / ventas",
     "education": "Educación / academia",
+    "engineering": "Ingeniería",
+    "hr_people": "Recursos humanos",
+    "customer_support": "Atención al cliente",
+    "operations_supply_chain": "Operaciones / cadena de suministro",
+    "sales": "Ventas / desarrollo de negocio",
+    "design_creative": "Diseño / creatividad",
+    "hospitality": "Hostelería",
+    "retail": "Comercio minorista",
+    "administration": "Administración / oficina",
+    "construction_trades": "Construcción / oficios",
 }
 
 _DOMAIN_SIGNALS = {
@@ -414,6 +439,14 @@ _DOMAIN_SIGNALS = {
         ("computer science", 2.5), ("programmer", 2.5),
         ("ingeniero de software", 3.0), ("desarrollador de software", 3.0),
     ),
+    "information_security": (
+        ("information security", 3.0), ("security operations", 3.0),
+        ("ict security", 3.0), ("soc analyst", 3.0),
+        ("cyber security", 3.0), ("security engineer", 3.0),
+        ("security analyst", 3.0), ("penetration tester", 3.0),
+        ("threat intelligence", 2.5), ("seguridad informatica", 3.0),
+        ("ciberseguridad", 3.0),
+    ),
     "environmental_science": (
         ("environmental scientist", 3.0), ("environmental science", 3.0),
         ("environmental impact", 2.5), ("environmental consultant", 3.0),
@@ -445,6 +478,76 @@ _DOMAIN_SIGNALS = {
         ("school teacher", 3.0), ("university lecturer", 3.0),
         ("professor of", 2.5), ("teacher", 2.0), ("lecturer", 2.5),
         ("academic faculty", 2.5), ("profesor", 2.0), ("docente", 2.0),
+    ),
+    "engineering": (
+        ("mechanical engineer", 3.0), ("electrical engineer", 3.0),
+        ("civil engineer", 3.0), ("chemical engineer", 3.0),
+        ("industrial engineer", 3.0), ("process engineer", 3.0),
+        ("manufacturing engineer", 3.0), ("quality engineer", 2.5),
+        ("ingeniero industrial", 3.0), ("ingeniero mecanico", 3.0),
+        ("ingeniero civil", 3.0), ("ingeniero electrico", 3.0),
+    ),
+    "hr_people": (
+        ("human resources", 3.0), ("hr generalist", 3.0),
+        ("hr business partner", 3.0), ("people operations", 3.0),
+        ("talent acquisition", 3.0), ("recruitment specialist", 2.5),
+        ("recruiter", 2.5), ("payroll specialist", 2.5),
+        ("recursos humanos", 3.0), ("seleccion de personal", 3.0),
+    ),
+    "customer_support": (
+        ("customer support", 3.0), ("customer service", 3.0),
+        ("customer care", 3.0), ("technical support", 3.0),
+        ("help desk", 2.5), ("helpdesk", 2.5), ("service desk", 2.5),
+        ("customer success", 2.5), ("atencion al cliente", 3.0),
+        ("servicio al cliente", 3.0), ("soporte tecnico", 3.0),
+    ),
+    "operations_supply_chain": (
+        ("supply chain", 3.0), ("logistics", 2.5),
+        ("procurement", 3.0), ("demand planner", 3.0),
+        ("inventory planning", 3.0), ("warehouse supervisor", 2.5),
+        ("operations research", 2.5), ("cadena de suministro", 3.0),
+        ("compras", 2.5), ("logistica", 2.5),
+    ),
+    "sales": (
+        ("sales development", 3.0), ("sales representative", 3.0),
+        ("account executive", 3.0), ("account manager", 2.5),
+        ("business development", 3.0), ("inside sales", 3.0),
+        ("field sales", 2.5), ("commercial manager", 2.5),
+        ("ventas", 2.5), ("desarrollo de negocio", 3.0),
+    ),
+    "design_creative": (
+        ("ux designer", 3.0), ("ui designer", 3.0),
+        ("product designer", 3.0), ("graphic designer", 3.0),
+        ("visual designer", 2.5), ("interaction designer", 3.0),
+        ("service designer", 2.5), ("disenador grafico", 3.0),
+    ),
+    "hospitality": (
+        ("hotel manager", 3.0), ("front desk", 2.5),
+        ("receptionist", 2.5), ("restaurant manager", 3.0),
+        ("head chef", 3.0), ("chef de cuisine", 3.0),
+        ("waiter", 2.5), ("bartender", 2.5), ("barista", 2.5),
+        ("housekeeping", 2.5), ("hosteleria", 3.0),
+    ),
+    "retail": (
+        ("retail manager", 3.0), ("store manager", 3.0),
+        ("store supervisor", 2.5), ("retail sales", 3.0),
+        ("sales associate", 2.5), ("shop assistant", 2.5),
+        ("cashier", 2.5), ("merchandising", 2.5),
+        ("stock replenishment", 2.5), ("dependiente", 2.5),
+        ("comercio minorista", 3.0),
+    ),
+    "administration": (
+        ("administrative assistant", 3.0), ("office manager", 3.0),
+        ("executive assistant", 3.0), ("office administrator", 2.5),
+        ("administrative officer", 2.5), ("asistente administrativo", 3.0),
+        ("administrativo", 2.5),
+    ),
+    "construction_trades": (
+        ("electrician", 3.0), ("plumber", 3.0), ("welder", 3.0),
+        ("hvac technician", 3.0), ("maintenance technician", 2.5),
+        ("construction manager", 2.5), ("site manager", 2.5),
+        ("carpenter", 2.5), ("electricista", 3.0),
+        ("fontanero", 3.0), ("soldador", 3.0),
     ),
 }
 
@@ -567,7 +670,7 @@ def _title_phrase_matches(title: str, phrase: str) -> bool:
 
 
 def _role_alias_title_score(title: str, target_titles: list[str]) -> float:
-    """Give related geoscience titles a strong, but sub-exact, relevance score."""
+    """Give related job titles a strong, but sub-exact, relevance score."""
     best = 0.0
     for target_phrase in target_titles:
         variants = role_search_variants(target_phrase)
@@ -581,8 +684,23 @@ def _role_alias_title_score(title: str, target_titles: list[str]) -> float:
     return best
 
 
+def _matches_target_role(title: str, target_phrase: str) -> bool:
+    """Match a real role phrase/alias, not just one generic shared word."""
+    normalized = _normalise_words(target_phrase)
+    role = _INTERNSHIP_SIGNAL_RE.sub(" ", normalized)
+    role = " ".join(role.split())
+    tokens = [token for token in role.split() if len(token) > 2]
+    if not tokens:
+        return False
+    if _contains_norm_term(title, role) or _title_phrase_matches(title, role):
+        return True
+    if _role_alias_title_score(title, [role]) >= 0.80:
+        return True
+    return all(_contains_norm_term(title, token) for token in tokens)
+
+
 _SENIORITY_SIGNAL_RE = re.compile(
-    r"(?<!\w)(?:senior|sr\.?|lead|principal|staff|head of|director|chief|"
+    r"(?<!\w)(?:senior|sr\.?|lead|principal|staff|head|director|chief|"
     r"vice president|vp|managing director)(?!\w)",
     flags=re.IGNORECASE,
 )
@@ -627,6 +745,27 @@ def _has_senior_experience_evidence(text: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in years_patterns)
 
 
+def _has_early_career_evidence(text: str) -> bool:
+    """Detect a genuinely early-career CV without treating every student as junior."""
+    normalized = _normalise_words(text)
+    if not normalized or _has_senior_experience_evidence(text):
+        return False
+    opening = normalized[:2600]
+    explicit_early = re.search(
+        r"(?<!\\w)(?:recent graduate|new graduate|graduate student|final year student|"
+        r"undergraduate student|master'?s student|currently studying|entry level candidate|"
+        r"seeking an internship|seeking internship|early career|recien graduado|"
+        r"reci[eé]n titulado|estudiante de master|estudiante universitario|"
+        r"busco practicas|buscando practicas)(?!\\w)",
+        opening,
+    )
+    short_experience = re.search(
+        r"(?<!\\w)(?:0|1|2)\\s*(?:-|to|a)\\s*(?:1|2)\\s*(?:years?|yrs?|anos?)\\b",
+        normalized,
+    )
+    return bool(explicit_early or short_experience)
+
+
 def _infer_target_seniority(target_titles: list[str], cv_text: str) -> str | None:
     """Infer the desired level from explicit role titles or strong CV evidence."""
     target_text = " | ".join(_normalise_words(item) for item in target_titles)
@@ -634,6 +773,7 @@ def _infer_target_seniority(target_titles: list[str], cv_text: str) -> str | Non
     wants_early = bool(
         _EARLY_CAREER_SIGNAL_RE.search(target_text)
         or _INTERNSHIP_SIGNAL_RE.search(target_text)
+        or _has_early_career_evidence(cv_text)
     )
     if wants_senior and wants_early:
         # Mixed explicit targets should not trigger a global level penalty.
@@ -731,7 +871,15 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
                 continue
             tokens = [token for token in phrase.split() if len(token) > 2]
             if tokens:
-                exact_scores.append(sum(1 for token in tokens if _contains_norm_term(title, token)) / len(tokens))
+                matched = sum(1 for token in tokens if _contains_norm_term(title, token))
+                if matched == len(tokens):
+                    exact_scores.append(0.90)
+                elif matched == 1:
+                    # One generic shared word (e.g. "data" or "analyst") is
+                    # weak evidence, not half a role match.
+                    exact_scores.append(0.22)
+                else:
+                    exact_scores.append(0.55 * matched / len(tokens))
         if exact_scores:
             title_score = max(exact_scores)
         # Search adapters can deliberately return a close role variant (e.g.
@@ -783,7 +931,9 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
     if mismatch:
         # A clear cross-domain mismatch should not outrank suitable roles just because
         # the vacancy repeats generic words like "scientist" or "research".
-        score = min(score, 24)
+        # Keep clear cross-domain mismatches below the dashboard's default
+        # 20-point display threshold; they remain in the database for diagnosis.
+        score = min(score, 14)
     else:
         # Reward a distinctive domain match when the user's target title is broad
         # (for example, "Scientist"), so a geoscience CV prefers geoscience over a
@@ -798,12 +948,40 @@ def score_job(row: dict[str, Any], config: dict[str, Any] | None = None,
     target_seniority = _infer_target_seniority(
         target_titles, cv_text or _text(profile.get("resume_text", ""))
     )
+    job_seniority = _infer_job_seniority(row, title, description)
     if target_seniority == "senior":
-        job_seniority = _infer_job_seniority(row, title, description)
         if job_seniority == "internship":
             score = min(score, 15)
         elif job_seniority == "junior":
             score = min(score, 30)
         elif job_seniority == "senior":
             score = min(100, score + 5)
+    elif target_seniority == "early":
+        # A recent graduate or explicit junior/intern search should not be led
+        # by senior vacancies with the same generic job title.
+        if job_seniority == "senior":
+            # Keep senior vacancies below the default display threshold for an early-career profile.
+            score = min(score, 14)
+
+    internship_targets = [
+        item for item in target_titles
+        if _INTERNSHIP_SIGNAL_RE.search(_normalise_words(item))
+    ]
+    non_internship_targets = [
+        item for item in target_titles
+        if not _INTERNSHIP_SIGNAL_RE.search(_normalise_words(item))
+    ]
+    internship_role_match = any(
+        _matches_target_role(title, item) for item in internship_targets
+    )
+    another_role_match = any(
+        _matches_target_role(title, item) for item in non_internship_targets
+    )
+    if internship_targets and not another_role_match:
+        if not internship_role_match or job_seniority != "internship":
+            # Do not let a generic title ("Intern - Global Payroll") or a
+            # non-intern role ("Business Analyst") fill a specific internship
+            # search. The user must explicitly target that other role or the
+            # posting must carry positive evidence that it is an internship.
+            score = min(score, 14)
     return score

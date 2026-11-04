@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 
-
 # Seniority labels can make job boards return too few results when the same role
 # is advertised without "Senior", "Lead", "Principal" or "Staff" in its title.
 # Keep the exact query first, then try the professional role without that prefix.
@@ -41,48 +40,76 @@ def search_query_variants(search_term: str) -> list[str]:
 
 
 def role_search_variants(search_term: str) -> list[str]:
-    """Return deduplicated query variants for geology roles, keeping the user's query first.
+    """Return conservative role synonyms, preserving the user's exact query first.
 
-    This is intentionally narrow: it does not semantically broaden unrelated
-    professions. Exact user wording always comes first so source queries preserve
-    the original intent before trying adjacent role terminology.
+    The aliases are deliberately curated rather than generated from isolated
+    words. This helps job boards find adjacent professional titles without
+    turning "Data Analyst" into every job that merely mentions "data".
     """
     query = re.sub(r"\s+", " ", str(search_term or "")).strip()
     if not query:
         return []
 
     folded = query.casefold()
-    is_hydro = bool(re.search(r"hydrogeolog|ground[\s-]?water", folded))
-    is_geology = is_hydro or bool(
-        re.search(r"geolog|geoscien|geophysic", folded)
-    )
-    if not is_geology:
-        return [query]
+    family: list[str] = []
 
-    if is_hydro:
-        family = [
-            "hydrogeologist",
-            "hydrogeology",
-            "hydrogeological",
-            "groundwater",
-            "ground water",
-            "geologist",
-            "geoscientist",
-            "engineering geologist",
-        ]
+    is_hydro = bool(re.search(r"hydrogeolog|ground[\s-]?water", folded))
+    is_geology = is_hydro or bool(re.search(r"geolog|geoscien|geophysic", folded))
+    if is_geology:
+        if is_hydro:
+            family = [
+                "hydrogeologist", "hydrogeology", "hydrogeological",
+                "groundwater", "groundwater specialist", "groundwater engineer",
+                "groundwater modeller", "groundwater modeler",
+                "groundwater consultant", "ground water specialist",
+                "geologist", "geoscientist", "engineering geologist",
+            ]
+        else:
+            family = [
+                "geologist", "geology", "geological", "geoscientist",
+                "geoscience", "engineering geologist", "environmental geologist",
+                "exploration geologist", "hydrogeologist",
+                "groundwater specialist", "groundwater engineer",
+                "groundwater modeller", "groundwater modeler",
+            ]
     else:
-        family = [
-            "geologist",
-            "geology",
-            "geological",
-            "geoscientist",
-            "geoscience",
-            "engineering geologist",
-            "environmental geologist",
-            "exploration geologist",
-            "hydrogeologist",
-            "groundwater",
-        ]
+        alias_groups = (
+            ("data analyst", (
+                "business intelligence analyst", "bi analyst",
+                "reporting analyst", "analytics analyst", "data reporting analyst",
+            )),
+            ("decision science", (
+                "decision scientist", "data science", "operations research analyst",
+                "quantitative analyst", "decision analyst",
+            )),
+            ("hr specialist", (
+                "human resources specialist", "hr generalist",
+                "people operations specialist", "recruitment specialist",
+            )),
+            ("customer support", (
+                "customer service specialist", "customer care specialist",
+                "technical support specialist", "customer success specialist",
+            )),
+            ("customer success", (
+                "customer support specialist", "customer service specialist",
+            )),
+            ("software engineer", (
+                "software developer", "software programmer",
+            )),
+            ("backend engineer", (
+                "backend developer", "back-end developer",
+            )),
+            ("financial analyst", (
+                "finance analyst", "fp&a analyst", "financial planning analyst",
+            )),
+            ("supply chain analyst", (
+                "logistics analyst", "procurement analyst", "demand planner",
+                "inventory analyst",
+            )),
+        )
+        for trigger, aliases in alias_groups:
+            if trigger in folded:
+                family.extend(aliases)
 
     output: list[str] = []
     seen: set[str] = set()
@@ -96,9 +123,13 @@ def role_search_variants(search_term: str) -> list[str]:
 
 
 def role_matches_text(search_term: str, candidate_text: str) -> bool:
-    """Match a geology search against title/tag text, including compound role names."""
+    """Match a role query against a title using complete professional aliases."""
     text = re.sub(r"\s+", " ", str(candidate_text or "")).casefold()
     for variant in role_search_variants(search_term):
+        # Broad standalone terms help query providers but are too noisy to
+        # qualify a title (e.g. "administrative officer - groundwater rights").
+        if variant.casefold() in {"groundwater"}:
+            continue
         pattern = r"(?<!\w)" + re.escape(variant.casefold()) + r"(?!\w)"
         if re.search(pattern, text):
             return True

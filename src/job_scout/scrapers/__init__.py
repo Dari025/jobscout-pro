@@ -125,12 +125,14 @@ def get_scraper(site: str, config: ScrapingConfig) -> BaseScraper:
     from job_scout.scrapers.glassdoor import GlassdoorScraper
     from job_scout.scrapers.google import GoogleScraper
     from job_scout.scrapers.indeed import IndeedScraper
+    from job_scout.scrapers.jobicy import JobicyScraper
     from job_scout.scrapers.linkedin import LinkedInScraper
     from job_scout.scrapers.ziprecruiter import ZipRecruiterScraper
 
     registry = {
         "freehire": FreehireScraper,
         "arbeitnow": ArbeitnowScraper,
+        "jobicy": JobicyScraper,
         "linkedin": LinkedInScraper,
         "indeed": IndeedScraper,
         "google": GoogleScraper,

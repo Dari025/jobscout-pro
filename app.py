@@ -42,6 +42,7 @@ from job_scout.workspace import (
     SEARCH_LOCATION_OPTIONS,
     build_workspace_config,
     cleanup_stale_session_workspaces,
+    parse_custom_locations,
     parse_session_keywords,
     parse_target_terms,
     touch_session_workspace,
@@ -57,7 +58,7 @@ from jobscout_links import (
     score_job,
 )
 
-APP_BUILD = "2026.11.04-consent-based-ai-cv-review-v8"
+APP_BUILD = "2026.11.04-profile-ranking-jobicy-v10"
 
 
 st.set_page_config(
@@ -389,7 +390,7 @@ def _apply_ai_role_suggestions() -> None:
     report = st.session_state.get("ai_cv_review")
     roles = report.get("role_families", []) if isinstance(report, dict) else []
     if roles:
-        st.session_state["target_title_clean"] = ", ".join(str(role).strip() for role in roles[:4] if str(role).strip())[:250]
+        st.session_state["target_title_clean"] = ", ".join(str(role).strip() for role in roles[:8] if str(role).strip())[:700]
 
 
 with st.sidebar:
@@ -399,9 +400,9 @@ with st.sidebar:
     target_title = st.text_input(
         "Puestos objetivo",
         key="target_title_clean",
-        placeholder="Ej. Data Analyst, Product Analyst",
-        max_chars=250,
-        help="Escribe los puestos que quieres buscar, separados por comas. Máximo 250 caracteres; puedes incluir varios títulos.",
+        placeholder="Ej. Data Analyst Intern, Decision Science Intern, Risk Analyst Intern",
+        max_chars=700,
+        help="Escribe varios puestos separados por comas. Puedes pegar una lista larga de hasta 700 caracteres; el modo rápido usa los cinco primeros y el completo consulta todos.",
     )
     search_locations = st.multiselect(
         "Ubicaciones para buscar",
@@ -409,6 +410,18 @@ with st.sidebar:
         key="search_locations_clean",
         help="Elige una o varias ubicaciones. No se selecciona ninguna por defecto.",
     )
+    custom_location_text = st.text_area(
+        "Otras ciudades, países o regiones (opcional)",
+        key="custom_locations_clean",
+        placeholder="Una ubicación por línea. Ej. Bilbao, Spain\\nRemote, UK\\nSan Francisco, CA, USA",
+        max_chars=600,
+        height=76,
+        help="Puedes añadir hasta 8 ubicaciones propias. Separa cada ubicación con un salto de línea o punto y coma; las comas dentro de una ciudad/dirección se conservan.",
+    )
+    custom_locations = parse_custom_locations(custom_location_text)
+    search_locations = list(dict.fromkeys([*search_locations, *custom_locations]))
+    if custom_locations:
+        st.caption("Ubicaciones adicionales: " + " · ".join(custom_locations))
 
     with st.expander("Personalizar el ranking (opcional)", expanded=False):
         raw_keywords = st.text_area(
@@ -551,6 +564,7 @@ with st.sidebar:
     st.selectbox(
         "Fecha de publicación",
         ["Cualquier fecha", "Últimos 3 días", "Últimos 7 días", "Últimos 14 días", "Últimos 30 días"],
+        index=4,
         key="published_window_clean",
         help="Las ofertas sin fecha conocida se conservan por defecto para no perder oportunidades.",
     )
@@ -684,6 +698,15 @@ with st.sidebar:
         else:
             st.session_state["scrape_requested"] = True
             st.session_state["requested_scan_mode"] = scan_mode
+            publication_window = st.session_state.get("published_window_clean", "Cualquier fecha")
+            publication_hours = {
+                "Últimos 3 días": 72,
+                "Últimos 7 días": 168,
+                "Últimos 14 días": 336,
+                "Últimos 30 días": 720,
+            }
+            st.session_state["requested_hours_old"] = publication_hours.get(publication_window, 0)
+            st.session_state["requested_include_unknown_dates"] = include_unknown_published_date
             st.rerun()
     if st.button("↻ Actualizar resultados", use_container_width=True):
         st.session_state.refresh_key += 1
@@ -705,7 +728,12 @@ if st.session_state.pop("scrape_requested", False):
     try:
         # Write only this session's search settings. CV text is never serialized.
         config_file = write_workspace_config(
-            config, session_dir, target_title, search_locations
+            config,
+            session_dir,
+            target_title,
+            search_locations,
+            hours_old=st.session_state.pop("requested_hours_old", 0),
+            include_unknown_dates=st.session_state.pop("requested_include_unknown_dates", True),
         )
     except (OSError, ValueError) as exc:
         st.error(f"No se ha podido preparar el espacio de búsqueda de esta sesión: {exc}")
@@ -1117,6 +1145,8 @@ with tab_discover:
                     st.caption(" · ".join(part for part in [location, source_name, date_value, salary] if part))
                     if source_name.casefold() == "arbeitnow":
                         st.caption("Fuente: [Arbeitnow](https://www.arbeitnow.com/)")
+                    elif source_name.casefold() == "jobicy":
+                        st.caption("Fuente: [Jobicy](https://jobicy.com/jobs-rss-feed)")
                     st.caption(
                         " · ".join([
                             f"Experiencia: {row.get('experience_level') or 'No indicado'}",

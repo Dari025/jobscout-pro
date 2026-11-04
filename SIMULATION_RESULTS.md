@@ -1,52 +1,81 @@
-# Resultados de simulación sintética — JobScout Pro
+# Auditoría y resultados de validación — JobScout Pro
 
-**Fecha de ejecución:** 26 de octubre de 2026  
-**Versión probada:** rama `fix/domain-aware-ranking`  
-**Datos:** CV y vacantes ficticios creados para las pruebas. No se utilizaron CV reales ni se hicieron llamadas de red.
+**Fecha:** 4 de noviembre de 2026
+**Rama:** `feat/privacy-first-ai-cv-review`
+**Alcance:** pruebas locales, perfiles y ofertas sintéticas y consultas reales de las fuentes públicas. No se han utilizado CV reales en el benchmark sintético ni se ha enviado ningún CV a proveedores.
 
-## Resultado clave: perfil científico del IGME
+## Resultado de los perfiles sintéticos
 
-Se simuló un currículum de geociencias con un objetivo deliberadamente ambiguo: «Scientist». El CV contiene términos de geología, geoquímica, hidrogeología y recursos minerales, además de vocabulario genérico de investigación, dirección de equipos, análisis y reporting.
+Se ha ampliado la batería a 16 perfiles profesionales, con cuatro vacantes ficticias por perfil (64 combinaciones):
 
-| Oferta ficticia | Puntuación sin protección de ámbito | Puntuación protegida |
-|---|---:|---:|
-| Oncology Research Scientist | **89** (1.ª) | 24 |
-| Senior Geoscientist | 87 (2.ª) | **95 (1.ª)** |
-| Research Scientist | 86 (3.ª) | 86 |
-| Data Scientist | 84 (4.ª) | 24 |
+| Perfil | Oferta pertinente en primer lugar |
+|---|---:|
+| Economía / analítica junior | 1.ª de 4 |
+| Hidrogeología | 1.ª de 4 |
+| Investigación clínica | 1.ª de 4 |
+| Ingeniería de software | 1.ª de 4 |
+| Ciencias medioambientales | 1.ª de 4 |
+| Derecho | 1.ª de 4 |
+| Finanzas | 1.ª de 4 |
+| Recursos humanos | 1.ª de 4 |
+| Marketing | 1.ª de 4 |
+| Cadena de suministro | 1.ª de 4 |
+| Diseño UX | 1.ª de 4 |
+| Educación | 1.ª de 4 |
+| Enfermería | 1.ª de 4 |
+| Atención al cliente | 1.ª de 4 |
+| Geología / jefatura de equipo | 1.ª de 4 |
+| Graduado / analista junior | 1.ª de 4 |
 
-La comparación sin protección es una reconstrucción del componente base de título y solapamiento textual para este escenario genérico; no pretende reproducir todos los detalles de cualquier versión histórica del producto. Su propósito es comprobar que el mecanismo nuevo evita que el vocabulario transversal de investigación domine la compatibilidad profesional.
+**Top-1 sintético: 16/16.** La batería de ocho escenarios original también mantiene 8/8 en primera posición. Son pruebas de regresión construidas con vocabulario y ofertas artificiales; no representan una estimación estadística de precisión en el mercado laboral.
 
-## Ocho perfiles probados
+### Casos adversariales añadidos
 
-Cada perfil se comparó con cuatro ofertas sintéticas: 32 combinaciones de perfil/oferta en total.
+- Una búsqueda de hidrogeólogo no debe premiar un puesto administrativo que mencione derechos de aguas: la puntuación de un desajuste profesional claro queda limitada a 14/100, por debajo del umbral de visualización habitual (20).
+- Una búsqueda de prácticas no debe colocar por delante una vacante conocida como jornada completa por compartir el título base. La oferta a tiempo completo se limita a 14/100; una práctica real conserva su puntuación.
+- Se prueban cambios de carrera explícitos, niveles junior/senior, títulos con palabras comunes y familias profesionales distintas.
 
-| Perfil sintético | Posición de la oferta pertinente | Puntuación máxima |
-|---|---:|---:|
-| Geociencias / IGME, objetivo «Scientist» | 1.ª de 4 | 95/100 |
-| Economía / analítica junior | 1.ª de 4 | 98/100 |
-| Investigación clínica / oncología | 1.ª de 4 | 100/100 |
-| Ingeniería de software | 1.ª de 4 | 100/100 |
-| Ciencias medioambientales | 1.ª de 4 | 100/100 |
-| Derecho | 1.ª de 4 | 100/100 |
-| Finanzas / inversión | 1.ª de 4 | 100/100 |
-| Cambio declarado de geología a análisis de datos | 1.ª de 4 | 88/100 |
+## Inspección de ofertas reales
 
-**Resultado top-1 del benchmark sintético: 8/8 (100 %).** Es una prueba de regresión pequeña y deliberadamente construida; no es una estimación de precisión en producción, ni permite inferir una probabilidad de entrevista o contratación. Hay que seguir comprobando ofertas reales y perfiles ambiguos.
+Las consultas se realizaron el 4 de noviembre de 2026. Los portales pueden actualizar o retirar anuncios después de esta fecha.
 
-## Controles automáticos de esta rama
+**Freehire**
+- «Data Analyst Intern», España: la primera lista contenía ocho resultados. Entre los primeros aparecieron prácticas de analítica en HP (Sant Cugat), Criteo (Barcelona) y Schneider Electric (Barcelona), con fechas entre el 29 de octubre y el 4 de noviembre. Los títulos y ámbitos eran compatibles con el objetivo sintético de economía/analítica.
+- «Business Analyst Intern», remoto Europa: la fuente devolvió puestos de Business Analyst, pero con metadatos de jornada completa. La nueva regla los deja por debajo del umbral de visualización de una búsqueda de prácticas; no se presentan como becas.
+- «Hydrogeologist», España: el feed devolvió algunas coincidencias parciales. El puesto administrativo de Grupo Tragsa sobre derechos de aguas fue identificado como desajuste de ámbito y queda por debajo del umbral. No se encontraron suficientes vacantes hidrogeológicas claramente pertinentes en esa consulta.
 
-- **67 pruebas de Python superadas** en la ejecución validada de Python 3.12.
-- Compilación de los módulos y carga de ayuda del CLI superadas.
-- El simulador de ranking termina correctamente y verifica que el caso IGME no vuelve a colocar oncología por encima de geociencias.
-- El escaneo automatizado de secretos en el código e historial de Git no detectó secretos reconocidos por sus patrones.
-- La auditoría automatizada de dependencias declaradas terminó sin vulnerabilidades reportadas por la herramienta en esa ejecución.
+**Arbeitnow**
+- En las consultas concretas de prácticas Data Analyst/Business Analyst y de hidrogeología realizadas en esta muestra, no devolvió resultados que pasaran los filtros de título y ubicación. El adaptador se ha endurecido para que una etiqueta genérica como «data», «business» o «remote» no convierta un puesto de otra profesión en una coincidencia.
 
-Estos controles no equivalen a una auditoría de seguridad independiente. El escáner de secretos no detecta todos los tipos de exposición: por ejemplo, el correo del autor que aparece en metadatos públicos de commits es información personal, no un secreto tipo API key. Consulta `PRIVACY_REVIEW.md`.
+**Jobicy**
+- En la muestra de su feed remoto europeo de los últimos siete días aparecieron cinco puestos de ingeniería backend compatibles con una búsqueda de Backend Engineer, uno de recursos humanos y uno de análisis financiero.
+- No se encontraron coincidencias recientes para las consultas de prácticas Data Analyst / Business Analyst en España/Europa, UX Designer o Hydrogeologist. Jobicy es una fuente remota complementaria; no sustituye las búsquedas locales de Freehire.
 
-## Próximas pruebas antes de un lanzamiento público
+La ausencia de resultados pertinentes no se compensa bajando automáticamente los criterios de relevancia. Es preferible mostrar cero coincidencias correctas que llenar la pantalla con falsos positivos.
 
-1. Probar el CV del IGME con consentimiento del titular y revisar los resultados reales.
-2. Evaluar una muestra mayor de vacantes reales en varios países y fuentes.
-3. Medir precisión de los primeros resultados, no solo el primer puesto: relevancia en top-5/top-10, falsos positivos y cobertura.
-4. Verificar en el alojamiento elegido el aislamiento de sesiones, los registros, el borrado y las condiciones de cada proveedor de ofertas.
+### Ensayo de búsqueda para un perfil sintético de analítica junior
+
+Se probó una lista de once títulos de prácticas de analítica y ciencias de la decisión (282 caracteres en total); el campo del dashboard se ha ampliado a 700 caracteres para admitir listas largas sin truncarse. Las consultas se ejecutaron con un resumen sintético de un perfil de economía junior, sin abrir ni transmitir ningún CV real:
+
+- **Data Analyst Intern — España:** ocho resultados; HP, Criteo y Schneider Electric aparecen entre los primeros y están clasificados como prácticas.
+- **Data Analyst Intern — remoto Europa:** cinco resultados brutos; una práctica de analítica de datos en energía superó el umbral de visualización. Los anuncios part-time/contract sin señal de prácticas quedaron a 14/100.
+- **Business Intelligence Intern — España:** HP apareció en primera posición con una oferta explícita de prácticas.
+- **Decision Science Intern y Operations Research Intern:** la muestra no produjo puestos suficientemente próximos y de nivel adecuado para superar el umbral de visualización. Se prefiere no recomendar prácticas de nóminas, cargos de dirección o puestos operativos genéricos por compartir palabras.
+
+Esta muestra es específica de esos términos, fuentes, ubicaciones y fecha de consulta; no implica que no existan otras vacantes en otros portales o días.
+
+## Pruebas técnicas
+
+- **145 pruebas automatizadas superadas** en Windows / Python 3.12 en la última ejecución (4 de noviembre de 2026).
+- Benchmark sintético: 16/16 perfiles en primera posición; simulación de ocho escenarios: 8/8.
+- Ruff: los módulos nuevos de Jobicy, filtros de fechas y sus pruebas pasan las comprobaciones seleccionadas. El repositorio heredado conserva avisos de lint en otros archivos; no se afirma que todo el código legado esté libre de avisos.
+- Compilación Python de la aplicación y módulos comprobada.
+- Prueba de renderizado de Streamlit: cero excepciones; cinco pestañas y controles principales presentes.
+- Comprobación HTTP local de Streamlit: respuesta 200 en el endpoint de salud y en la página principal.
+- La integración Groq de revisión de CV está cubierta por pruebas simuladas; todavía no se ha probado una petición real porque no se ha proporcionado una clave API.
+
+## Qué significan estos resultados
+
+JobScout está más protegido frente a errores claros de título, ámbito profesional, geografía, antigüedad y nivel. Aun así, un 100 % en datos sintéticos no es un 100 % de precisión en vacantes reales. Los proveedores pueden devolver feeds incompletos, etiquetas erróneas o anuncios ya cerrados. El enlace específico tampoco garantiza que el puesto siga abierto: revisa la ficha original y los requisitos antes de solicitarlo.
+
+La puntuación es un índice de relevancia, no una probabilidad de entrevista o contratación. La auditoría real debe continuar con tus búsquedas de cada semana y con feedback manual sobre ofertas buenas y malas.

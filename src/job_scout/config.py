@@ -55,10 +55,11 @@ class ProfileConfig(BaseModel):
 class SearchConfig(BaseModel):
     terms: list[str]
     locations: list[str]
-    sites: list[str] = ["freehire", "arbeitnow", "linkedin", "indeed", "glassdoor", "ziprecruiter"]
+    sites: list[str] = ["freehire", "arbeitnow", "jobicy"]
     results_per_site: int = 25
     hours_old: int = 72
     distance_miles: int = 50
+    include_unknown_dates: bool = True
 
 
 class ScrapingConfig(BaseModel):

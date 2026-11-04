@@ -12,15 +12,14 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
-import yaml
-from pydantic import ValidationError
-
 from job_scout.config import (
-    DEFAULT_DB_PATH,
     DATA_DIR,
+    DEFAULT_DB_PATH,
     XDG_CONFIG_PATH,
     AppConfig,
     load_config,
@@ -28,6 +27,7 @@ from job_scout.config import (
     resolve_data_paths,
     validate_quality,
 )
+from job_scout.date_filters import filter_jobs_by_age
 from job_scout.db import JobDB
 from job_scout.export import write_csv, write_json
 from job_scout.models import Location, ScrapeParams, ScrapeRun, Site
@@ -75,7 +75,7 @@ def _filter_alert_jobs(jobs: list, cfg) -> list:
     ]
 
 
-QUICK_SITE_PRIORITY = ("freehire", "arbeitnow")
+QUICK_SITE_PRIORITY = ("freehire", "arbeitnow", "jobicy")
 FALLBACK_SITE_PRIORITY = ("linkedin", "indeed", "glassdoor", "ziprecruiter", "bayt")
 
 
@@ -182,7 +182,7 @@ def scrape(
     tasks = []
     for site_name in sites:
         site_locations = locations
-        if site_name not in {"freehire", "arbeitnow"}:
+        if site_name not in {"freehire", "arbeitnow", "jobicy"}:
             concrete = [
                 loc for loc in locations
                 if not ("remote" in str(loc).casefold() and "europe" in str(loc).casefold())
@@ -209,10 +209,16 @@ def scrape(
             results_wanted=cfg.search.results_per_site,
             hours_old=cfg.search.hours_old,
             distance_miles=cfg.search.distance_miles,
+            include_unknown_dates=cfg.search.include_unknown_dates,
         )
         try:
             scraper = get_scraper(s_name, cfg.scraping)
             jobs = scraper.scrape(params)
+            jobs = filter_jobs_by_age(
+                jobs,
+                hours_old=params.hours_old,
+                include_unknown_dates=params.include_unknown_dates,
+            )
         except Exception as e:
             return s_name, s_term, s_loc, [], str(e)
         # Score in worker thread (CPU-bound but fast)
@@ -1099,14 +1105,15 @@ def rescore(
 def digest():
     """Send daily digest of top job matches via email, Telegram, Slack, and/or Discord."""
     from datetime import timedelta
+
     from job_scout.notify import (
-        send_email,
-        send_telegram,
-        send_slack,
-        send_discord,
+        _esc_discord,
         _esc_md,
         _esc_slack,
-        _esc_discord,
+        send_discord,
+        send_email,
+        send_slack,
+        send_telegram,
     )
 
     cfg = _get_config()

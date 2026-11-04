@@ -11,7 +11,7 @@ flowchart TD
     A["Visitante<br/>puestos + ubicaciones + habilidades"] --> B["app.py<br/>(Streamlit)"]
     B --> C["Carpeta temporal única<br/>por sesión de navegador"]
     C --> D["Subproceso<br/>python -m job_scout.cli scrape"]
-    D --> E["Freehire · Arbeitnow<br/>LinkedIn · Indeed"]
+    D --> E["Freehire · Arbeitnow<br/>Jobicy · APIs de empleo"]
     E --> F["jobs.sqlite<br/>de esta sesión"]
     F --> G["Análisis del anuncio<br/>salario · experiencia · contrato · jornada"]
     G --> H["Índice 0-100<br/>título + habilidades + CV"]
@@ -82,10 +82,11 @@ No se garantiza una duración fija: el tiempo depende de la respuesta de cada po
 
 ## Fuentes de búsqueda y diagnóstico
 
-La búsqueda rápida prioriza **Freehire** y **Arbeitnow**, fuentes con respuestas estructuradas, y también consulta LinkedIn e Indeed como respaldo por si la fuente principal no tiene vacantes para una consulta concreta. La búsqueda completa amplía la cobertura con más términos y páginas. Google Jobs se omite porque el resultado actual requiere JavaScript y el parser del servidor no puede recogerlo de forma fiable.
+La búsqueda rápida prioriza **Freehire**, **Arbeitnow** y **Jobicy**, fuentes con respuestas estructuradas. Jobicy aporta vacantes remotas elegibles por país o región; su feed se consulta por región y se filtra por puesto localmente, sin enviar el texto del CV ni las búsquedas de empleo. La caché pública se conserva una hora para evitar consultas repetidas. La búsqueda completa amplía la cobertura con más términos y páginas. LinkedIn e Indeed permanecen como adaptadores opcionales, desactivados por defecto. Google Jobs se omite porque el resultado actual requiere JavaScript y el parser del servidor no puede recogerlo de forma fiable.
 
 - **Freehire** permite lecturas sin clave para uso personal y no comercial. Para mostrar sus ofertas en una aplicación o producto que ofrezcas a otras personas (también si es gratuito) hace falta un plan API; el plan API publicado cuesta actualmente 29 USD/mes. La versión compartida no debe habilitar esa fuente sin la licencia correspondiente. Consulta [API y licencia](https://freehire.me/jobs-api) y [documentación](https://freehire.me/docs/api).
-- **Arbeitnow** ofrece un feed de vacantes; sus términos exigen enlazar de vuelta a Arbeitnow y permiten revocar el permiso API. Las tarjetas de JobScout incluyen ese enlace de atribución. Antes de ampliar el uso, revisa las [condiciones API](https://www.arbeitnow.com/terms).
+- **Arbeitnow** ofrece un feed europeo; sus términos exigen enlazar de vuelta a Arbeitnow y permiten revocar el permiso API. Las tarjetas de JobScout incluyen ese enlace de atribución. Consulta las [condiciones API](https://www.arbeitnow.com/terms).
+- **Jobicy** ofrece un feed público de empleo remoto, sin clave API, con filtro por elegibilidad geográfica y una ventana de anuncios recientes de siete días. JobScout mantiene el enlace canónico de Jobicy y muestra su atribución; la API recomienda no consultar el feed más de una vez por hora. Consulta la [documentación y condiciones de uso](https://jobicy.com/jobs-rss-feed).
 - La aplicación registra por fuente las consultas, anuncios recibidos, consultas vacías y errores. Si ninguna fuente devuelve ofertas utilizables, la búsqueda termina con advertencia y código de error: ya no se presenta un resultado vacío como si todo hubiera salido bien.
 - Los portales pueden limitar peticiones, cambiar sus páginas o retirar anuncios. La comprobación de URL confirma que el enlace es específico, pero no garantiza que el puesto siga abierto; comprueba la oferta antes de solicitarla.
 
@@ -98,30 +99,22 @@ JobScout Pro es una herramienta **personal y educativa**, no un servicio comerci
 - Respeta los límites de peticiones de cada portal y no uses la herramienta para recopilar datos a gran escala.
 - El índice de encaje es orientativo: no es una probabilidad de contratación ni un filtro automático de candidaturas.
 
-## Instalación en Windows
+## Iniciar en Windows
 
-Requiere Python 3.10 o superior.
+Requiere Python 3.10 o superior. Para la mayoría de usuarios basta con hacer doble clic en **`INICIAR-JOBSCOUT.bat`**. El lanzador crea un entorno virtual `.venv` dentro de esta carpeta, instala las dependencias y abre JobScout en `http://127.0.0.1:8502`. El servidor escucha solo en el propio equipo; no expone el dashboard a la red local ni a Internet. Mantén abierta la ventana negra mientras uses la aplicación y ciérrala para detenerla.
 
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-Crea tu configuración privada:
+También puedes iniciarlo manualmente desde PowerShell:
 
 ```powershell
-Copy-Item .\busqueda.example.yaml .\busqueda.yaml
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1 --server.port 8502 --server.headless false --browser.gatherUsageStats false
 ```
 
-Edita `busqueda.yaml` con tu perfil y las búsquedas que te interesan. No subas ese archivo a GitHub. El texto del CV debe estar vacío en el ejemplo; introduce únicamente la información que quieras usar en tu equipo.
+El dashboard usa `busqueda.example.yaml` como plantilla neutral y crea una base de datos temporal aislada para cada sesión. No necesitas copiar ni editar un YAML para buscar: escribe los puestos y ubicaciones en la barra lateral, añade habilidades si te ayudan a ordenar y carga el CV solo después de dar consentimiento. Cada familiar puede abrir su propia sesión y hacer una búsqueda distinta; el CV no se guarda en el YAML ni en SQLite.
 
-Arranca el dashboard:
-
-```powershell
-streamlit run app.py
-```
+Para el uso normal, inicia siempre con `INICIAR-JOBSCOUT.bat` o con el comando manual de arriba. No uses `streamlit run app.py` sin `--server.address 127.0.0.1` en una máquina que tenga datos personales, porque el servidor podría escuchar en otras interfaces de red.
 
 ## Base de datos
 
