@@ -29,6 +29,7 @@ def compute_content_key(
 class Site(str, Enum):
     FREEHIRE = "freehire"
     ARBEITNOW = "arbeitnow"
+    JOBICY = "jobicy"
     LINKEDIN = "linkedin"
     INDEED = "indeed"
     GOOGLE = "google"
@@ -336,3 +337,4 @@ class ScrapeParams(BaseModel):
     results_wanted: int = 25
     hours_old: int = 72
     distance_miles: int = 50
+    include_unknown_dates: bool = True

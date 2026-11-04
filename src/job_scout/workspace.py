@@ -24,8 +24,39 @@ SEARCH_LOCATION_OPTIONS = [
     "Barcelona, Spain",
     "Valencia, Spain",
     "Spain",
+    "Remote, Spain",
     "Remote, Europe",
+    "Remote, Worldwide",
+    "Remote, United States",
 ]
+MAX_CUSTOM_LOCATIONS = 8
+MAX_CUSTOM_LOCATION_CHARS = 120
+
+
+def parse_custom_locations(raw: Any) -> list[str]:
+    """Parse user-entered locations, one per line or separated by semicolons.
+
+    Commas are preserved so addresses such as "San Francisco, CA, USA" remain
+    one location. Unsafe URLs/control characters and oversized values are
+    rejected rather than passed to a job-search provider.
+    """
+    values = re.split(r"[;\n]+", str(raw or ""))
+    locations: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        location = " ".join(str(value).split()).strip()
+        if not location or len(location) > MAX_CUSTOM_LOCATION_CHARS:
+            continue
+        if any(ord(char) < 32 for char in location) or "://" in location:
+            continue
+        folded = location.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        locations.append(location)
+        if len(locations) >= MAX_CUSTOM_LOCATIONS:
+            break
+    return locations
 
 # Per-session keyword limits. These only feed the dashboard ranking of the
 # current browser session; they are never written to disk.
@@ -72,6 +103,8 @@ def build_workspace_config(
     target_title: str,
     search_locations: list[str] | tuple[str, ...],
     custom_keywords: list[str] | tuple[str, ...] | None = None,
+    *,
+    allow_custom_locations: bool = False,
 ) -> dict[str, Any]:
     """Create a neutral config and bind its SQLite database to one browser session.
 
@@ -104,11 +137,27 @@ def build_workspace_config(
     search = dict(result.get("search") or {})
     search["terms"] = parse_target_terms(target_title)
     valid_locations = set(SEARCH_LOCATION_OPTIONS)
-    search["locations"] = list(dict.fromkeys(
-        str(location).strip()
-        for location in search_locations
-        if str(location).strip() in valid_locations
-    ))
+    normalized_locations: list[str] = []
+    seen_locations: set[str] = set()
+    for value in search_locations:
+        location = " ".join(str(value or "").split()).strip()
+        if (
+            not location
+            or len(location) > MAX_CUSTOM_LOCATION_CHARS
+            or any(ord(char) < 32 for char in location)
+            or "://" in location
+        ):
+            continue
+        folded = location.casefold()
+        if folded in seen_locations:
+            continue
+        if location not in valid_locations and not allow_custom_locations:
+            continue
+        seen_locations.add(folded)
+        normalized_locations.append(location)
+        if len(normalized_locations) >= MAX_CUSTOM_LOCATIONS + len(SEARCH_LOCATION_OPTIONS):
+            break
+    search["locations"] = normalized_locations
     result["search"] = search
 
     result["db_path"] = str(workspace / "jobs.sqlite")
@@ -122,13 +171,24 @@ def write_workspace_config(
     workspace_dir: str | Path,
     target_title: str,
     search_locations: list[str] | tuple[str, ...],
+    *,
+    hours_old: int | None = None,
+    include_unknown_dates: bool | None = None,
 ) -> Path:
     """Write the per-session scraper config with no personal CV/profile data."""
     workspace = Path(workspace_dir).expanduser().resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     payload = build_workspace_config(
-        base_config, workspace, target_title, search_locations
+        base_config,
+        workspace,
+        target_title,
+        search_locations,
+        allow_custom_locations=True,
     )
+    if hours_old is not None:
+        payload.setdefault("search", {})["hours_old"] = max(0, int(hours_old))
+    if include_unknown_dates is not None:
+        payload.setdefault("search", {})["include_unknown_dates"] = bool(include_unknown_dates)
     config_path = workspace / "config.yaml"
     config_path.write_text(
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),

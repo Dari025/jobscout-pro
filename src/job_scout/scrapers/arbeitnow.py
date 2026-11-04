@@ -6,13 +6,13 @@ import logging
 import re
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import httpx
 
 from job_scout.models import Job, JobType, Location, ScrapeParams, Site
-from job_scout.scrapers import BaseScraper
 from job_scout.role_terms import role_matches_text
+from job_scout.scrapers import BaseScraper
 from job_scout.util import html_to_text
 
 log = logging.getLogger("job_scout.scrapers.arbeitnow")
@@ -75,30 +75,45 @@ def _parse_date(value) -> date | None:
         return None
     try:
         if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(value, tz=timezone.utc).date()
+            return datetime.fromtimestamp(value, tz=UTC).date()
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
     except (ValueError, TypeError, OSError, OverflowError):
         return None
 
 
 def _matches_term(row: dict, search_term: str) -> bool:
+    """Match full role phrases and curated aliases in the actual job title.
+
+    Provider tags are noisy and often contain generic terms. They can no longer
+    qualify a posting on their own; every meaningful query token must appear
+    in the title unless a curated full-title alias matches.
+    """
     title = _normalise(row.get("title"))
-    tags = row.get("tags") if isinstance(row.get("tags"), list) else []
-    tag_text = _normalise(" ".join(str(item) for item in tags))
-    # Do not require seniority words to appear literally in the title. They
-    # are often encoded in job_types or omitted from the listing altogether.
+    job_types = row.get("job_types") if isinstance(row.get("job_types"), list) else []
+    job_type_text = _normalise(" ".join(str(value) for value in job_types))
+    internship_words = r"(?<!\w)(?:intern|internship|trainee|working student|fellowship)(?!\w)"
+    if re.search(internship_words, _normalise(search_term)) and not re.search(
+        internship_words, f"{title} {job_type_text}"
+    ):
+        return False
+
     ignored = {
         "intern", "internship", "junior", "entry", "level", "graduate",
         "trainee", "working", "student", "the", "and", "or",
+        "senior", "sr", "lead", "principal", "staff",
     }
-    tokens = [token for token in re.findall(r"[a-z0-9]+", _normalise(search_term)) if token not in ignored]
+    tokens = [
+        token for token in re.findall(r"[a-z0-9]+", _normalise(search_term))
+        if token not in ignored
+    ]
     if not tokens:
         return True
-    joined = f"{title} {tag_text}"
-    # Recognise common geology/hydrogeology aliases and compound titles.
-    if role_matches_text(search_term, joined):
+    if role_matches_text(search_term, title):
         return True
-    return any(re.search(r"(?<!\\w)" + re.escape(token) + r"(?!\\w)", joined) for token in tokens)
+    return all(
+        re.search(rf"(?<!\w){re.escape(token)}(?!\w)", title) is not None
+        for token in tokens
+    )
 
 
 def _job_types(values: object) -> list[JobType]:
@@ -172,11 +187,18 @@ class ArbeitnowScraper(BaseScraper):
                 continue
             loc = _normalise(row.get("location"))
             if spain_requested and not (
-                candidate.location.is_remote or "spain" in loc or "españa" in loc or "madrid" in loc
+                "spain" in loc or "españa" in loc or "madrid" in loc
+                or "barcelona" in loc or "valencia" in loc or "seville" in loc
+                or "sevilla" in loc
             ):
+                # "Remote" alone does not establish eligibility from Spain.
                 continue
             if remote_requested and not candidate.location.is_remote:
                 continue
+            if params.hours_old > 0 and candidate.date_posted is not None:
+                max_days = max(1, (int(params.hours_old) + 23) // 24)
+                if (date.today() - candidate.date_posted).days > max_days:
+                    continue
             jobs.append(candidate)
             if len(jobs) >= params.results_wanted:
                 break

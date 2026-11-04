@@ -52,7 +52,7 @@ def test_igme_cv_is_not_flagged_for_geoscience_role():
 
 def test_igme_cv_score_for_oncology_is_capped():
     score = score_job(ONCOLOGY_JOB, _config(), IGME_CV)
-    assert score <= 24
+    assert score <= 14
 
 
 def test_igme_cv_ranks_geoscience_above_oncology():

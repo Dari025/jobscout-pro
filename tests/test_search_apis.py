@@ -10,7 +10,9 @@ from job_scout.models import JobType, Site
 from job_scout.scrapers.arbeitnow import _matches_term, parse_arbeitnow_job
 from job_scout.scrapers.freehire import (
     _seniority_params,
+    _row_location_matches,
     _validate_search_metadata,
+    _within_age_limit,
     parse_freehire_job,
 )
 from job_scout.role_terms import role_matches_text, role_search_variants

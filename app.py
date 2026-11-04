@@ -8,8 +8,8 @@ import queue
 import re
 import subprocess
 import sys
-import threading
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -23,31 +23,13 @@ SRC_DIR = Path(__file__).resolve().parent / "src"
 if SRC_DIR.is_dir() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from jobscout_links import (  # noqa: E402
-    canonicalize_row,
-    canonical_job_identity,
-    choose_job_links,
-    load_config,
-    load_jobs_from_sqlite,
-    professional_domain_mismatch,
-    score_job,
-)
-from job_scout.workspace import (  # noqa: E402
-    SEARCH_LOCATION_OPTIONS,
-    build_workspace_config,
-    cleanup_stale_session_workspaces,
-    parse_session_keywords,
-    parse_target_terms,
-    touch_session_workspace,
-    write_workspace_config,
-)
+from job_scout.ai_cv_review import CVReviewError, review_cv_with_groq
 from job_scout.cv_privacy import CVProcessingError, extract_pdf_text
-from job_scout.runtime_env import build_scraper_subprocess_env
 from job_scout.job_analysis import (
     CONTRACT_TYPES,
+    DURATION_BANDS,
     EXPERIENCE_BANDS,
     WORK_MODES,
-    DURATION_BANDS,
     analyze_job,
     job_matches_optional_filters,
 )
@@ -55,8 +37,28 @@ from job_scout.notifications import (
     build_top_jobs_digest,
     render_digest_text,
 )
+from job_scout.runtime_env import build_scraper_subprocess_env
+from job_scout.workspace import (
+    SEARCH_LOCATION_OPTIONS,
+    build_workspace_config,
+    cleanup_stale_session_workspaces,
+    parse_custom_locations,
+    parse_session_keywords,
+    parse_target_terms,
+    touch_session_workspace,
+    write_workspace_config,
+)
+from jobscout_links import (
+    canonical_job_identity,
+    canonicalize_row,
+    choose_job_links,
+    load_config,
+    load_jobs_from_sqlite,
+    professional_domain_mismatch,
+    score_job,
+)
 
-APP_BUILD = "2026.10.28-seniority-ranking-compact-cv-v7"
+APP_BUILD = "2026.11.04-profile-ranking-jobicy-v10"
 
 
 st.set_page_config(
@@ -212,6 +214,7 @@ if st.session_state.get("_workspace_schema") != SESSION_SCHEMA:
 if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4().hex
 st.session_state.setdefault("cv_text", "")
+st.session_state.setdefault("ai_cv_review", None)
 st.session_state.setdefault("saved_jobs", {})
 st.session_state.setdefault("refresh_key", 0)
 st.session_state.setdefault("target_title_clean", "")
@@ -350,6 +353,9 @@ def _clear_cv_for_session() -> None:
     st.session_state["cv_text"] = ""
     st.session_state["cv_fingerprint"] = ""
     st.session_state["cv_consent_clean"] = False
+    st.session_state["ai_cv_review"] = None
+    st.session_state["ai_cv_consent_clean"] = False
+    st.session_state.pop("groq_api_key_input", None)
     st.session_state["cv_uploader_version"] = int(
         st.session_state.get("cv_uploader_version", 0)
     ) + 1
@@ -362,11 +368,29 @@ def _handle_cv_consent_change() -> None:
     if not bool(st.session_state.get("cv_consent_clean", False)):
         st.session_state["cv_text"] = ""
         st.session_state["cv_fingerprint"] = ""
+        st.session_state["ai_cv_review"] = None
+        st.session_state["ai_cv_consent_clean"] = False
+        st.session_state.pop("groq_api_key_input", None)
         st.session_state["cv_uploader_version"] = int(
             st.session_state.get("cv_uploader_version", 0)
         ) + 1
         _purge_uploaded_cv_widget_state()
         st.session_state["cv_removed_notice"] = True
+
+
+def _handle_ai_cv_consent_change() -> None:
+    """Withdraw external-AI permission and clear the report and session key."""
+    if not bool(st.session_state.get("ai_cv_consent_clean", False)):
+        st.session_state["ai_cv_review"] = None
+        st.session_state.pop("groq_api_key_input", None)
+
+
+def _apply_ai_role_suggestions() -> None:
+    """Copy user-approved AI role suggestions into the search-title widget."""
+    report = st.session_state.get("ai_cv_review")
+    roles = report.get("role_families", []) if isinstance(report, dict) else []
+    if roles:
+        st.session_state["target_title_clean"] = ", ".join(str(role).strip() for role in roles[:8] if str(role).strip())[:700]
 
 
 with st.sidebar:
@@ -376,9 +400,9 @@ with st.sidebar:
     target_title = st.text_input(
         "Puestos objetivo",
         key="target_title_clean",
-        placeholder="Ej. Data Analyst, Product Analyst",
-        max_chars=250,
-        help="Escribe los puestos que quieres buscar, separados por comas. Máximo 250 caracteres; puedes incluir varios títulos.",
+        placeholder="Ej. Data Analyst Intern, Decision Science Intern, Risk Analyst Intern",
+        max_chars=700,
+        help="Escribe varios puestos separados por comas. Puedes pegar una lista larga de hasta 700 caracteres; el modo rápido usa los cinco primeros y el completo consulta todos.",
     )
     search_locations = st.multiselect(
         "Ubicaciones para buscar",
@@ -386,6 +410,18 @@ with st.sidebar:
         key="search_locations_clean",
         help="Elige una o varias ubicaciones. No se selecciona ninguna por defecto.",
     )
+    custom_location_text = st.text_area(
+        "Otras ciudades, países o regiones (opcional)",
+        key="custom_locations_clean",
+        placeholder="Una ubicación por línea. Ej. Bilbao, Spain\\nRemote, UK\\nSan Francisco, CA, USA",
+        max_chars=600,
+        height=76,
+        help="Puedes añadir hasta 8 ubicaciones propias. Separa cada ubicación con un salto de línea o punto y coma; las comas dentro de una ciudad/dirección se conservan.",
+    )
+    custom_locations = parse_custom_locations(custom_location_text)
+    search_locations = list(dict.fromkeys([*search_locations, *custom_locations]))
+    if custom_locations:
+        st.caption("Ubicaciones adicionales: " + " · ".join(custom_locations))
 
     with st.expander("Personalizar el ranking (opcional)", expanded=False):
         raw_keywords = st.text_area(
@@ -454,6 +490,9 @@ with st.sidebar:
             # Purge the extracted text; no CV remains in scoring.
             st.session_state.cv_text = ""
             st.session_state.cv_fingerprint = ""
+            st.session_state["ai_cv_review"] = None
+            st.session_state["ai_cv_consent_clean"] = False
+            st.session_state.pop("groq_api_key_input", None)
             st.session_state["cv_removed_notice"] = True
 
         if uploaded_cv and consent:
@@ -463,6 +502,9 @@ with st.sidebar:
                 # Do not keep an older CV active if replacing it with an invalid PDF.
                 st.session_state.cv_text = ""
                 st.session_state.cv_fingerprint = ""
+                st.session_state["ai_cv_review"] = None
+                st.session_state["ai_cv_consent_clean"] = False
+                st.session_state.pop("groq_api_key_input", None)
                 try:
                     extraction = extract_pdf_text(file_bytes)
                 except CVProcessingError as exc:
@@ -522,6 +564,7 @@ with st.sidebar:
     st.selectbox(
         "Fecha de publicación",
         ["Cualquier fecha", "Últimos 3 días", "Últimos 7 días", "Últimos 14 días", "Últimos 30 días"],
+        index=4,
         key="published_window_clean",
         help="Las ofertas sin fecha conocida se conservan por defecto para no perder oportunidades.",
     )
@@ -655,6 +698,15 @@ with st.sidebar:
         else:
             st.session_state["scrape_requested"] = True
             st.session_state["requested_scan_mode"] = scan_mode
+            publication_window = st.session_state.get("published_window_clean", "Cualquier fecha")
+            publication_hours = {
+                "Últimos 3 días": 72,
+                "Últimos 7 días": 168,
+                "Últimos 14 días": 336,
+                "Últimos 30 días": 720,
+            }
+            st.session_state["requested_hours_old"] = publication_hours.get(publication_window, 0)
+            st.session_state["requested_include_unknown_dates"] = include_unknown_published_date
             st.rerun()
     if st.button("↻ Actualizar resultados", use_container_width=True):
         st.session_state.refresh_key += 1
@@ -676,7 +728,12 @@ if st.session_state.pop("scrape_requested", False):
     try:
         # Write only this session's search settings. CV text is never serialized.
         config_file = write_workspace_config(
-            config, session_dir, target_title, search_locations
+            config,
+            session_dir,
+            target_title,
+            search_locations,
+            hours_old=st.session_state.pop("requested_hours_old", 0),
+            include_unknown_dates=st.session_state.pop("requested_include_unknown_dates", True),
         )
     except (OSError, ValueError) as exc:
         st.error(f"No se ha podido preparar el espacio de búsqueda de esta sesión: {exc}")
@@ -827,7 +884,101 @@ m2.metric("Alta relevancia", f"{high_relevance:,}", help="Índice orientativo de
 m3.metric("Con enlace específico", f"{with_link:,}")
 m4.metric("Coinciden con filtros", f"{len(df):,}")
 
-tab_discover, tab_saved, tab_alerts, tab_method = st.tabs(["✦ Oportunidades", "★ Guardadas", "🔔 Alertas", "ⓘ Cómo funciona"])
+tab_discover, tab_saved, tab_alerts, tab_cv, tab_method = st.tabs(["✦ Oportunidades", "★ Guardadas", "🔔 Alertas", "📄 Calidad del CV", "ⓘ Cómo funciona"])
+
+with tab_cv:
+    st.subheader("Revisión de calidad del currículum")
+    st.caption("La revisión de IA es opcional y no altera automáticamente tu puntuación ni tus ofertas.")
+    if not st.session_state.cv_text:
+        st.info("Carga un CV PDF en el apartado «Currículum» de la barra lateral para revisar su calidad.")
+    else:
+        st.success("CV disponible en esta sesión. El PDF original no se enviará a Groq; solo el texto extraído y con datos de contacto redactados.")
+        st.markdown(
+            "**Qué se revisa:** claridad, estructura, evidencias de impacto, competencias demostrables, legibilidad ATS y familias de puestos compatibles. "
+            "El resultado evalúa el documento, no tu valía ni una probabilidad de contratación."
+        )
+        st.warning(
+            "Privacidad y consentimiento: al activar la casilla y pulsar «Analizar CV con IA», "
+            "el texto del currículum se enviará a Groq (proveedor externo) para generar el informe. "
+            "Se eliminan automáticamente correos, teléfonos y enlaces comunes, pero el resto del texto puede contener datos personales. "
+            "Groq indica que no usa los datos de clientes para entrenar sus modelos; por defecto no conserva las peticiones de inferencia, "
+            "aunque puede registrar temporalmente entradas y salidas hasta 30 días para investigar incidencias o abusos. "
+            "Groq indica que los datos retenidos se alojan en Estados Unidos; puedes activar Zero Data Retention en los controles de tu cuenta. La clave API también pasa por el servidor que aloja JobScout para ejecutar la petición: si no confías en quien administra ese servidor, no la introduzcas y utiliza una instalación local o propia."
+        )
+        st.markdown("[Consultar cómo trata Groq tus datos](https://console.groq.com/docs/your-data) · [Crear una clave API personal](https://console.groq.com/keys) · [Controles de retención (ZDR)](https://console.groq.com/settings/data-controls)")
+        st.checkbox(
+            "Consiento expresamente enviar el texto extraído de mi CV a Groq para este análisis.",
+            key="ai_cv_consent_clean",
+            on_change=_handle_ai_cv_consent_change,
+        )
+        api_key = st.text_input(
+            "Tu clave API de Groq (no se guarda en disco)",
+            key="groq_api_key_input",
+            type="password",
+            disabled=not st.session_state.get("ai_cv_consent_clean", False),
+            help="Introduce tu propia clave. Se mantiene solo en la memoria de la sesión de esta app; no la compartas ni la incluyas en archivos del proyecto.",
+        )
+        analyze_col, clear_col = st.columns([2, 1])
+        with analyze_col:
+            analyze_clicked = st.button(
+                "✦ Analizar CV con IA",
+                type="primary",
+                use_container_width=True,
+                disabled=(not st.session_state.get("ai_cv_consent_clean", False) or not api_key.strip()),
+            )
+        with clear_col:
+            clear_review_clicked = st.button("Borrar informe", use_container_width=True)
+        if clear_review_clicked:
+            st.session_state["ai_cv_review"] = None
+            st.rerun()
+        if analyze_clicked:
+            try:
+                with st.spinner("Analizando el documento…"):
+                    st.session_state["ai_cv_review"] = review_cv_with_groq(
+                        st.session_state.cv_text, api_key
+                    )
+                st.success("Informe generado. Se mantiene únicamente en esta sesión.")
+            except CVReviewError as exc:
+                st.error(str(exc))
+        report = st.session_state.get("ai_cv_review")
+        if isinstance(report, dict):
+            st.divider()
+            st.metric("Calidad del CV", f"{report.get('overall_score', 0)}/100", help="Índice orientativo de calidad documental, no probabilidad de contratación.")
+            st.write(report.get("summary", ""))
+            sections = report.get("sections", [])
+            if sections:
+                st.markdown("#### Evaluación por apartados")
+                st.dataframe(pd.DataFrame(sections), use_container_width=True, hide_index=True)
+            for heading, field in (
+                ("Puntos fuertes", "strengths"),
+                ("Mejoras prioritarias", "improvements"),
+                ("Evidencias que faltaría aportar", "missing_evidence"),
+                ("Compatibilidad ATS", "ats_issues"),
+                ("Familias de puestos sugeridas", "role_families"),
+                ("Advertencias", "warnings"),
+            ):
+                values = report.get(field, [])
+                if values:
+                    st.markdown(f"#### {heading}")
+                    for value in values:
+                        st.markdown(f"- {value}")
+            if report.get("role_families"):
+                st.button(
+                    "Usar estos puestos para mi búsqueda",
+                    key="apply_ai_role_suggestions",
+                    on_click=_apply_ai_role_suggestions,
+                    help="Rellena el campo de puestos objetivo. Después podrás revisar los términos y lanzar la búsqueda cuando quieras.",
+                )
+            skills = report.get("skills_detected", [])
+            if skills:
+                st.markdown("#### Competencias detectadas y evidencia")
+                st.dataframe(pd.DataFrame(skills), use_container_width=True, hide_index=True)
+            redactions = report.get("redactions", {})
+            st.caption(
+                f"Texto analizado: {report.get('characters_reviewed', 0):,} caracteres · "
+                f"datos redactados: {sum(redactions.values()) if isinstance(redactions, dict) else 0} · "
+                "modelo: openai/gpt-oss-20b"
+            )
 
 with tab_alerts:
     st.subheader("Tu resumen de oportunidades")
@@ -992,6 +1143,10 @@ with tab_discover:
                     st.subheader(title)
                     st.markdown(f"**{company}**")
                     st.caption(" · ".join(part for part in [location, source_name, date_value, salary] if part))
+                    if source_name.casefold() == "arbeitnow":
+                        st.caption("Fuente: [Arbeitnow](https://www.arbeitnow.com/)")
+                    elif source_name.casefold() == "jobicy":
+                        st.caption("Fuente: [Jobicy](https://jobicy.com/jobs-rss-feed)")
                     st.caption(
                         " · ".join([
                             f"Experiencia: {row.get('experience_level') or 'No indicado'}",
